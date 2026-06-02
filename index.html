@@ -20,77 +20,101 @@
     - forged flag -> server-only column hidden by subscription filtering
 -->
 <style>
+  :root{
+    --bg-0:#0c0e12; --panel-bg:rgba(20,12,14,0.74); --panel-border:rgba(170,40,55,0.30);
+    --crimson:#ff2f44; --crimson-deep:#b3121f; --crimson-dim:#7a2730; --blood:#5a0a12;
+    --trust-warm:#ffd9a8; --trust-amber:#ffb86b; --untrust:#ff4d5e; --untrust-dim:#8a4a50;
+    --ink:#e8dcdf; --ink-dim:#9a7e84;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #05070c; }
-  body { font-family: "Courier New", ui-monospace, monospace; color: #cfe3e8; cursor: default; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg-0); }
+  body { font-family: "Courier New", ui-monospace, monospace; color: var(--ink); cursor: default; }
   #app { position: fixed; inset: 0; }
   canvas { display: block; }
 
   /* --- post overlays (cheap "post-processing") --- */
   #vignette {
     position: fixed; inset: 0; pointer-events: none; z-index: 5;
-    box-shadow: inset 0 0 240px 60px rgba(0,0,0,0.9);
+    box-shadow: inset 0 0 240px 60px rgba(8,0,2,0.92);
     transition: box-shadow 0.6s ease;
   }
   #grain {
-    position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0.05;
+    position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0.06;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
     mix-blend-mode: overlay;
   }
-  #flash { position: fixed; inset: 0; pointer-events: none; z-index: 4; background: #aeb9ff; opacity: 0; }
-  #danger { position: fixed; inset: 0; pointer-events: none; z-index: 4; background: radial-gradient(ellipse at center, rgba(120,0,20,0) 40%, rgba(150,0,30,0.35) 100%); opacity: 0; transition: opacity 0.4s; }
+  /* flash = lightning/portal cut. Warm-grey, NOT blue, so it reads as pale twilight. */
+  #flash { position: fixed; inset: 0; pointer-events: none; z-index: 4; background: #e8d4c8; opacity: 0; }
+  /* danger = crimson blood-vignette closing in */
+  #danger { position: fixed; inset: 0; pointer-events: none; z-index: 4;
+    background: radial-gradient(ellipse at center, rgba(90,10,18,0) 38%, rgba(150,12,28,0.42) 100%);
+    opacity: 0; transition: opacity 0.4s; }
   #glitch { position: fixed; inset: 0; pointer-events: none; z-index: 7; opacity: 0;
-    background: repeating-linear-gradient(0deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, transparent 2px, transparent 4px); }
+    background: repeating-linear-gradient(0deg, rgba(255,60,80,0.05) 0px, rgba(255,60,80,0.05) 1px, transparent 2px, transparent 4px); }
 
   /* --- HUD --- */
   #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
-  .panel { position: absolute; background: rgba(6,10,16,0.72); border: 1px solid rgba(80,150,160,0.25);
-    padding: 10px 14px; backdrop-filter: blur(2px); letter-spacing: 0.5px; }
+  .panel { position: absolute; background: var(--panel-bg); border: 1px solid var(--panel-border);
+    padding: 10px 14px; backdrop-filter: blur(3px); letter-spacing: 0.5px;
+    box-shadow: 0 0 18px rgba(150,15,30,0.12), inset 0 0 0 1px rgba(255,60,80,0.04); }
   #top { top: 16px; left: 50%; transform: translateX(-50%); text-align: center; min-width: 280px; }
-  #top .title { font-size: 13px; color: #6fd3e0; letter-spacing: 4px; }
-  #top .sub { font-size: 11px; color: #6a8088; margin-top: 2px; }
+  #top .title { font-size: 13px; color: var(--crimson); letter-spacing: 5px; text-shadow: 0 0 12px rgba(255,47,68,0.55); }
+  #top .sub { font-size: 11px; color: var(--ink-dim); margin-top: 2px; }
   #anchors { top: 16px; left: 16px; font-size: 13px; }
-  #anchors .n { color: #8be9ff; font-size: 20px; }
+  #anchors .n { color: var(--crimson); font-size: 20px; text-shadow: 0 0 10px rgba(255,47,68,0.5); }
   #timer { top: 16px; right: 16px; font-size: 13px; text-align: right; }
-  #timer .t { color: #ffd28b; font-size: 20px; }
-  #phase { color: #c98; font-size: 11px; margin-top: 4px; }
+  #timer .t { color: var(--trust-amber); font-size: 20px; }
+  #phase { color: var(--crimson-dim); font-size: 11px; margin-top: 4px; }
 
   #roster { bottom: 16px; right: 16px; font-size: 12px; min-width: 180px; }
   #roster .who { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
-  #roster .seen { color: #ffcaa0; }
-  #roster .unseen { color: #5b6f76; }
+  #roster .seen { color: var(--trust-amber); }
+  #roster .unseen { color: var(--untrust-dim); }
   #roster .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align: middle; }
+
+  /* --- minimap (2D canvas overlay, crimson) --- */
+  #minimap {
+    position: fixed; top: 86px; right: 16px; width: 170px; height: 170px; z-index: 9;
+    pointer-events: none; border: 1px solid rgba(190,30,45,0.45); border-radius: 6px;
+    background: rgba(10,4,6,0.66); box-shadow: 0 0 18px rgba(160,0,25,0.22), inset 0 0 26px rgba(120,0,20,0.35);
+    backdrop-filter: blur(2px);
+  }
 
   /* --- chat --- */
   #chat { position: fixed; bottom: 16px; left: 16px; width: 360px; z-index: 11; pointer-events: none; }
   #log { max-height: 220px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
-  .msg { background: rgba(6,10,16,0.66); border-left: 3px solid #444; padding: 6px 10px; margin-top: 6px;
+  .msg { background: rgba(18,10,12,0.70); border-left: 3px solid #4a2329; padding: 6px 10px; margin-top: 6px;
     font-size: 13px; line-height: 1.3; animation: rise 0.25s ease; }
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .msg .name { font-weight: bold; }
-  .msg .verified { font-size: 10px; color: #ffcaa0; margin-left: 6px; letter-spacing: 1px; }
-  .msg .unknown { font-size: 10px; color: #6a7c83; margin-left: 6px; letter-spacing: 1px; }
-  .msg.sys { border-left-color: #2a6b73; color: #7fb8c0; font-style: italic; }
-  .msg.me { border-left-color: #6fd3e0; }
+  .msg .verified { font-size: 10px; color: var(--trust-warm); margin-left: 6px; letter-spacing: 1px;
+    text-shadow: 0 0 8px rgba(255,217,168,0.7); }
+  .msg .unknown  { font-size: 10px; color: var(--untrust); margin-left: 6px; letter-spacing: 1px; }
+  .msg.sys { border-left-color: var(--crimson-deep); color: var(--crimson-dim); font-style: italic; }
+  .msg.me  { border-left-color: var(--crimson); }
 
   /* --- overlays (start / end) --- */
   .screen { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
-    background: radial-gradient(ellipse at center, rgba(8,12,20,0.92), rgba(2,3,6,0.98)); text-align: center; }
+    background: radial-gradient(ellipse at center, rgba(28,12,16,0.93), rgba(6,2,4,0.985)); text-align: center; }
   .screen .box { max-width: 620px; padding: 32px; }
-  .screen h1 { font-size: 46px; letter-spacing: 12px; color: #7fe0ec; text-shadow: 0 0 24px rgba(80,200,220,0.5); }
-  .screen .tag { color: #6a8088; font-size: 13px; margin: 14px 0 22px; line-height: 1.6; letter-spacing: 1px; }
-  .screen .ctrls { color: #8aa; font-size: 12px; line-height: 1.9; margin: 18px 0; }
-  .screen .ctrls b { color: #cfe3e8; }
-  .btn { display: inline-block; margin-top: 18px; padding: 12px 30px; border: 1px solid #5fb0bd;
-    color: #bdeef5; letter-spacing: 3px; cursor: pointer; pointer-events: auto; background: rgba(20,40,46,0.4);
+  .screen h1 { font-size: 46px; letter-spacing: 12px; color: var(--crimson);
+    text-shadow: 0 0 28px rgba(255,30,52,0.55), 0 0 4px rgba(255,90,110,0.6); }
+  .screen .tag { color: var(--ink-dim); font-size: 13px; margin: 14px 0 22px; line-height: 1.6; letter-spacing: 1px; }
+  .screen .tag b { color: var(--ink); }
+  .screen .tag i { color: var(--untrust); font-style: italic; }
+  .screen .ctrls { color: var(--ink-dim); font-size: 12px; line-height: 1.9; margin: 18px 0; }
+  .screen .ctrls b { color: var(--ink); }
+  .btn { display: inline-block; margin-top: 18px; padding: 12px 30px; border: 1px solid var(--crimson-deep);
+    color: #ffd2d8; letter-spacing: 3px; cursor: pointer; pointer-events: auto; background: rgba(60,12,18,0.42);
     transition: all 0.2s; font-family: inherit; font-size: 14px; }
-  .btn:hover { background: rgba(40,90,100,0.6); box-shadow: 0 0 20px rgba(80,200,220,0.4); }
-  .screen.win h1 { color: #9ff0c0; }
-  .screen.lose h1 { color: #ff7a8a; }
+  .btn:hover { background: rgba(120,16,28,0.6); border-color: var(--crimson);
+    box-shadow: 0 0 22px rgba(255,30,52,0.45); color: #fff; }
+  .screen.win h1  { color: #ff9a86; text-shadow: 0 0 26px rgba(255,120,90,0.5); }
+  .screen.lose h1 { color: var(--crimson); text-shadow: 0 0 30px rgba(255,20,40,0.7); }
   .hidden { display: none !important; }
   #interact { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 11;
-    color: #ffe2b0; font-size: 13px; letter-spacing: 2px; pointer-events: none; opacity: 0; transition: opacity 0.2s;
-    text-shadow: 0 0 10px rgba(0,0,0,0.9); }
+    color: var(--trust-amber); font-size: 13px; letter-spacing: 2px; pointer-events: none; opacity: 0;
+    transition: opacity 0.2s; text-shadow: 0 0 10px rgba(0,0,0,0.9); }
 </style>
 </head>
 <body>
@@ -106,6 +130,7 @@
   <div class="panel" id="top"><div class="title">THRESHOLD</div><div class="sub" id="topsub">the world does not want you to leave</div></div>
   <div class="panel" id="timer">ESCAPE IN<br><span class="t" id="time">10:00</span><div id="phase">phase 1 — it is watching</div></div>
   <div class="panel" id="roster"></div>
+  <canvas id="minimap" width="170" height="170"></canvas>
 </div>
 
 <div id="chat"><div id="log"></div></div>
@@ -124,7 +149,7 @@
     </div>
     <div class="ctrls">
       <b>W A S D</b> — move &nbsp;·&nbsp; <b>← →</b> or <b>J / L</b> — turn &nbsp;·&nbsp; <b>E</b> — pick up / place anchor<br>
-      A message glows <span style="color:#ffcaa0">warm</span> only when you can <i>see</i> the sender. No glow = unverifiable.
+      A message glows <span style="color:#ffd9a8">warm</span> only when you can <i>see</i> the sender. No glow = unverifiable.
     </div>
     <div class="btn" id="startBtn">ENTER THE THRESHOLD</div>
   </div>
@@ -140,6 +165,8 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- GLTFLoader: plain global IIFE (attaches THREE.GLTFLoader), r128-pinned. Must load AFTER three.min.js. -->
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
 <script>
 "use strict";
 /* ============================================================
@@ -186,6 +213,19 @@ let portalPairs = [];     // seamless teleport doorways: loops + "bigger on the 
 let reshapeables = [];    // wall segments the Warden rewrites while you aren't looking
 let portalCooldown = 0, portalGuard = null;
 
+// --- rigged character (RobotExpressive GLB): walk/run/jump/grab via AnimationMixer ---
+let playerModel = null;            // gltf.scene; replaces the capsule visually once loaded
+let mixer = null;                  // THREE.AnimationMixer
+const clipActions = {};            // name -> AnimationAction
+let currentAction = null;          // active locomotion action
+const ONESHOT = { active: false, name: null };  // jump/grab overlay
+// Clip names decoded from RobotExpressive.glb (verified): Idle/Walking/Running/Jump/Punch are real.
+const CLIP = { idle: "Idle", walk: "Walking", run: "Running", jump: "Jump", grab: "Punch" };
+const ROBOT_GLB = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/RobotExpressive/RobotExpressive.glb";
+const RUN_MULT = 1.75;             // Shift-run speed multiplier
+const JUMP_TIME = 0.95;            // seconds the Jump clip owns the body
+let jumpT = 0, grabLatch = false;
+
 // ---- input ----
 const keys = {};
 addEventListener("keydown", e => { keys[e.code] = true; });
@@ -196,8 +236,8 @@ addEventListener("keyup", e => { keys[e.code] = false; });
    ============================================================ */
 function buildWorld() {
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x05080e);
-  scene.fog = new THREE.FogExp2(0x070b14, 0.035);
+  scene.background = new THREE.Color(0x161a21);   // desaturated cold-grey twilight (was near-black)
+  scene.fog = new THREE.FogExp2(0x1c2129, 0.022); // grey haze, thinned so the lift is visible
 
   camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 400);
 
@@ -207,19 +247,19 @@ function buildWorld() {
   document.getElementById("app").appendChild(renderer.domElement);
 
   // ambient + hemisphere (cold)
-  scene.add(new THREE.AmbientLight(0x223040, 0.55));
-  const hemi = new THREE.HemisphereLight(0x12303a, 0x02040a, 0.5);
+  scene.add(new THREE.AmbientLight(0x3a3640, 0.85));                 // grey fill, brighter
+  const hemi = new THREE.HemisphereLight(0x44343a, 0x100a0c, 0.75);  // crimson-grey sky / dim blood ground
   scene.add(hemi);
   scene.userData.hemi = hemi;
 
   // floor — wet, dark, faint teal sheen
-  const floorMat = new THREE.MeshStandardMaterial({ color: 0x0a121a, roughness: 0.45, metalness: 0.3, emissive: 0x02080a });
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x1a1418, roughness: 0.45, metalness: 0.3, emissive: 0x0a0204 });
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), floorMat);
   floor.rotation.x = -Math.PI / 2;
   scene.add(floor);
 
   // ceiling (low, oppressive)
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.MeshStandardMaterial({ color: 0x05080d, roughness: 1 }));
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 1 }));
   ceil.rotation.x = Math.PI / 2; ceil.position.y = 9;
   scene.add(ceil);
 
@@ -239,7 +279,7 @@ function buildWorld() {
 function addWall(x, z, w, d) {
   walls.push({ x, z, w, d });
   const h = 9;
-  const mat = new THREE.MeshStandardMaterial({ color: 0x0c1620, roughness: 0.9, metalness: 0.1, emissive: 0x030a0c });
+  const mat = new THREE.MeshStandardMaterial({ color: 0x20222b, roughness: 0.9, metalness: 0.1, emissive: 0x0c0306 });
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, h / 2, z);
   scene.add(m);
@@ -252,7 +292,7 @@ function decorateWall(x, z, w, d) {
   const count = Math.max(2, Math.floor((w + d) * 0.5));
   for (let i = 0; i < count; i++) {
     const g = new THREE.CylinderGeometry(0.06, 0.13, 2 + Math.random() * 3, 5);
-    const teal = new THREE.MeshStandardMaterial({ color: 0x0a2a30, emissive: 0x10707a, emissiveIntensity: 0.7, roughness: 1 });
+    const teal = new THREE.MeshStandardMaterial({ color: 0x2a0a12, emissive: 0xb31226, emissiveIntensity: 0.7, roughness: 1 });
     const t = new THREE.Mesh(g, teal);
     const onX = Math.random() > 0.5;
     t.position.set(
@@ -310,7 +350,7 @@ function buildRooms() {
   // scattered flickering point lights — unstable world (PRD 8)
   const lp = [[0,-4],[-28,4],[28,4],[0,-28],[-4,16],[14,-18]];
   for (const [lx, lz] of lp) {
-    const c = Math.random() > 0.6 ? 0xffb04a : 0x4aa6ff;
+    const c = Math.random() > 0.6 ? 0xffb04a : 0xff3346;   // amber sparks or crimson (was blue)
     const pl = new THREE.PointLight(c, 1.1, 26, 2);
     pl.position.set(lx, 4 + Math.random() * 2, lz);
     pl.userData = { base: 1.1, phase: Math.random() * 10, dead: false };
@@ -321,20 +361,20 @@ function buildRooms() {
 
 function buildConvergence() {
   const g = new THREE.TorusGeometry(3.2, 0.18, 12, 48);
-  const m = new THREE.MeshStandardMaterial({ color: 0x103040, emissive: 0x1d6f8a, emissiveIntensity: 1.2 });
+  const m = new THREE.MeshStandardMaterial({ color: 0x3a1016, emissive: 0xd11a30, emissiveIntensity: 1.2 });
   convergence = new THREE.Mesh(g, m);
   convergence.rotation.x = Math.PI / 2;
   convergence.position.set(0, 0.2, 4);
   scene.add(convergence);
 
-  const pl = new THREE.PointLight(0x2bb0d0, 1.4, 18, 2);
+  const pl = new THREE.PointLight(0xe02438, 1.4, 18, 2);
   pl.position.set(0, 2, 4);
   scene.add(pl);
   convergence.userData.light = pl;
 
   // exit gate (revealed on win)
   exitGate = new THREE.Mesh(new THREE.PlaneGeometry(5, 7),
-    new THREE.MeshBasicMaterial({ color: 0xaef0ff, transparent: true, opacity: 0 }));
+    new THREE.MeshBasicMaterial({ color: 0xffe6c2, transparent: true, opacity: 0 }));
   exitGate.position.set(0, 3.5, 4);
   scene.add(exitGate);
 }
@@ -342,9 +382,9 @@ function buildConvergence() {
 function makeAnchorMesh(real) {
   const g = new THREE.Group();
   const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.55),
-    new THREE.MeshStandardMaterial({ color: 0x0a2630, emissive: 0x33e0c0, emissiveIntensity: 1.6, roughness: 0.3 }));
+    new THREE.MeshStandardMaterial({ color: 0x300a12, emissive: 0xff3850, emissiveIntensity: 1.6, roughness: 0.3 }));
   g.add(core);
-  const halo = new THREE.PointLight(0x33e0c0, 1.2, 8, 2);
+  const halo = new THREE.PointLight(0xff3850, 1.2, 8, 2);
   g.add(halo);
   g.userData.core = core;
   // NOTE: real & fake look identical (PRD 4.4) — no visual tell until placed.
@@ -370,7 +410,7 @@ function buildAnchors() {
 function buildBots() {
   const defs = [
     { name: "Mara", color: 0xff9a5c, start: new V3(-30, 0, 5) },
-    { name: "Cass", color: 0x9c7bff, start: new V3(30, 0, 5) },
+    { name: "Cass", color: 0xffc46b, start: new V3(30, 0, 5) },   // warm rose-gold (was blue-violet)
   ];
   defs.forEach((d, i) => {
     const g = new THREE.Group();
@@ -394,14 +434,72 @@ function buildPlayer() {
   playerMesh = new THREE.Group();
   const body = new THREE.Mesh(
     THREE.CapsuleGeometry ? new THREE.CapsuleGeometry(0.45, 1.15, 4, 10) : new THREE.CylinderGeometry(0.45, 0.45, 1.9, 10),
-    new THREE.MeshStandardMaterial({ color: 0x15171c, emissive: 0x2a6f9c, emissiveIntensity: 0.4, roughness: 0.5 }));
+    new THREE.MeshStandardMaterial({ color: 0x1c1814, emissive: 0xc77a3a, emissiveIntensity: 0.4, roughness: 0.5 }));
   body.position.y = 1;
   playerMesh.add(body);
-  playerGlow = new THREE.PointLight(0x6fd3e0, 1.6, 9, 2);
+  playerGlow = new THREE.PointLight(0xffb066, 1.6, 9, 2);   // warm bone-amber (was teal)
   playerGlow.position.y = 1.3;
   playerMesh.add(playerGlow);
   playerMesh.position.copy(state.pos);
   scene.add(playerMesh);
+  loadPlayerModel();   // async rigged character; capsule stays as fallback until/if it loads
+}
+
+/* ============================================================
+   RIGGED CHARACTER — RobotExpressive GLB + AnimationMixer.
+   walk / run [shift] / jump [space] / grab [G], graceful capsule fallback.
+   ============================================================ */
+function loadPlayerModel() {
+  if (!THREE.GLTFLoader) { console.warn("[THRESHOLD] GLTFLoader missing — keeping capsule."); return; }
+  const loader = new THREE.GLTFLoader();
+  loader.load(ROBOT_GLB, (gltf) => {
+    playerModel = gltf.scene;
+    playerModel.scale.setScalar(0.42);                    // FBX2glTF bakes a 100x armature scale
+    playerModel.position.y = 0;
+    playerModel.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+    const capsule = playerMesh.children.find(c => c.isMesh);
+    if (capsule) capsule.visible = false;                 // hide placeholder body, KEEP playerGlow
+    playerMesh.add(playerModel);
+    const rim = new THREE.DirectionalLight(0xffd9a8, 1.1); // warm key light on the character
+    rim.position.set(2.5, 4, -3.5); rim.target = playerModel;
+    playerMesh.add(rim); playerMesh.add(rim.target);
+    mixer = new THREE.AnimationMixer(playerModel);
+    for (const clip of gltf.animations) clipActions[clip.name] = mixer.clipAction(clip);
+    [CLIP.jump, CLIP.grab].forEach((n) => {
+      if (clipActions[n]) { clipActions[n].setLoop(THREE.LoopOnce); clipActions[n].clampWhenFinished = true; }
+    });
+    currentAction = clipActions[CLIP.idle];
+    if (currentAction) currentAction.play();
+    mixer.addEventListener("finished", () => { ONESHOT.active = false; ONESHOT.name = null; });
+    sysMsg("a body coalesces around you — run [shift], leap [space], reach [G].");
+  }, undefined, (err) => { console.warn("[THRESHOLD] RobotExpressive load failed, keeping capsule:", err); });
+}
+
+function fadeToAction(name, dur) {
+  const next = clipActions[name];
+  if (!next || next === currentAction) return;
+  next.reset(); next.enabled = true; next.setEffectiveTimeScale(1); next.setEffectiveWeight(1);
+  next.crossFadeFrom(currentAction || next, dur, false); next.play();
+  currentAction = next;
+}
+function playOneShot(name, dur) {
+  const act = clipActions[name];
+  if (!act) return;
+  ONESHOT.active = true; ONESHOT.name = name;
+  act.reset(); act.setEffectiveTimeScale(1); act.setEffectiveWeight(1);
+  if (currentAction) currentAction.fadeOut(dur);
+  act.fadeIn(dur).play();
+}
+function updatePlayerAnim(dt) {
+  if (!mixer) return;
+  mixer.update(dt);
+  if (keys["KeyG"]) { if (!grabLatch) { grabLatch = true; playOneShot(CLIP.grab, 0.12); } } else grabLatch = false;
+  if (keys["Space"] && jumpT <= 0 && !ONESHOT.active) { jumpT = JUMP_TIME; playOneShot(CLIP.jump, 0.1); }
+  if (jumpT > 0) jumpT -= dt;
+  if (ONESHOT.active || jumpT > 0) return;                // one-shot owns the body
+  const moving = (keys["KeyW"]||keys["ArrowUp"]||keys["KeyS"]||keys["ArrowDown"]||keys["KeyA"]||keys["KeyD"]);
+  const running = moving && (keys["ShiftLeft"] || keys["ShiftRight"]);
+  fadeToAction(running ? CLIP.run : moving ? CLIP.walk : CLIP.idle, 0.22);
 }
 
 function buildSpores() {
@@ -414,7 +512,7 @@ function buildSpores() {
     arr[i*3+2] = (Math.random() - 0.5) * 90;
   }
   geo.setAttribute("position", new THREE.BufferAttribute(arr, 3));
-  const mat = new THREE.PointsMaterial({ color: 0x6fd3e0, size: 0.07, transparent: true, opacity: 0.55, depthWrite: false });
+  const mat = new THREE.PointsMaterial({ color: 0xc4505f, size: 0.07, transparent: true, opacity: 0.45, depthWrite: false });
   spores = new THREE.Points(geo, mat);
   scene.add(spores);
 }
@@ -456,8 +554,8 @@ function buildWardenFigure() {
    ============================================================ */
 function buildPortals() {
   const defs = [
-    { a: new V3(6, 0, -30), ay: 0, b: new V3(0, 0, 17), by: 0, color: 0x8be9ff },                          // Penrose loop: deep north -> back near spawn
-    { a: new V3(-34, 0, 11), ay: Math.PI / 2, b: new V3(34, 0, -2), by: -Math.PI / 2, color: 0xc59bff },   // bigger-on-the-inside: west <-> east
+    { a: new V3(6, 0, -30), ay: 0, b: new V3(0, 0, 17), by: 0, color: 0xff3a4e },                          // Penrose loop: deep north -> back near spawn
+    { a: new V3(-34, 0, 11), ay: Math.PI / 2, b: new V3(34, 0, -2), by: -Math.PI / 2, color: 0xd1457a },   // bigger-on-the-inside: west <-> east
   ];
   for (const d of defs) {
     const pair = { a: { pos: d.a, yaw: d.ay }, b: { pos: d.b, yaw: d.by }, color: d.color };
@@ -507,7 +605,7 @@ function addShifter(ax, az, w, d, bx, bz) {
   walls.push({ x: ax, z: az, w, d });
   const h = 9;
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshStandardMaterial({ color: 0x1a1410, emissive: 0x6a3a08, emissiveIntensity: 0.45, roughness: 0.95 }));
+    new THREE.MeshStandardMaterial({ color: 0x1f1210, emissive: 0x7a2810, emissiveIntensity: 0.45, roughness: 0.95 }));
   m.position.set(ax, h / 2, az);
   scene.add(m); wallMeshes.push(m);
   reshapeables.push({ idx, slotA: { x: ax, z: az }, slotB: { x: bx, z: bz }, cur: "A", mesh: m });
@@ -828,6 +926,23 @@ function openExit() {
 /* ============================================================
    PLAYER MOVEMENT + CAMERA
    ============================================================ */
+// largest distance along unit (dx,dz) from (px,pz) before a wall blocks the camera
+// (xz slab test vs padded wall AABBs). Keeps the third-person cam out of geometry.
+function cameraClampDist(px, pz, dx, dz, maxDist, pad) {
+  let best = maxDist;
+  for (const w of walls) {
+    const minx = w.x - w.w / 2 - pad, maxx = w.x + w.w / 2 + pad;
+    const minz = w.z - w.d / 2 - pad, maxz = w.z + w.d / 2 + pad;
+    let t0 = 0, t1 = maxDist;
+    if (Math.abs(dx) < 1e-9) { if (px < minx || px > maxx) continue; }
+    else { let ta = (minx - px) / dx, tb = (maxx - px) / dx; if (ta > tb) { const s = ta; ta = tb; tb = s; } t0 = Math.max(t0, ta); t1 = Math.min(t1, tb); }
+    if (Math.abs(dz) < 1e-9) { if (pz < minz || pz > maxz) continue; }
+    else { let ta = (minz - pz) / dz, tb = (maxz - pz) / dz; if (ta > tb) { const s = ta; ta = tb; tb = s; } t0 = Math.max(t0, ta); t1 = Math.min(t1, tb); }
+    if (t1 >= Math.max(0, t0) && t0 < best) best = Math.max(0, t0);
+  }
+  return best;
+}
+
 function updatePlayer(dt) {
   // turn
   if (keys["ArrowLeft"] || keys["KeyJ"]) state.yaw += 2.2 * dt;
@@ -841,7 +956,8 @@ function updatePlayer(dt) {
   if (keys["KeyD"]) move.add(right);
   if (keys["KeyA"]) move.sub(right);
 
-  let speed = PLAYER_SPEED * (state.carrying ? CARRY_SLOW : 1);
+  const runHeld = (keys["ShiftLeft"] || keys["ShiftRight"]) && !state.carrying;
+  let speed = PLAYER_SPEED * (state.carrying ? CARRY_SLOW : (runHeld ? RUN_MULT : 1));
   if (move.lengthSq() > 0) {
     move.normalize();
     let nx = state.pos.x + move.x * speed * dt;
@@ -850,16 +966,25 @@ function updatePlayer(dt) {
     state.pos.set(nx, 0, nz);
   }
   playerMesh.position.copy(state.pos);
-  playerMesh.rotation.y = Math.atan2(fwd.x, fwd.z);
+  // RobotExpressive faces +Z; add PI so it faces the move/look direction. Capsule keeps un-flipped.
+  playerMesh.rotation.y = Math.atan2(fwd.x, fwd.z) + (playerModel ? Math.PI : 0);
 
-  // third-person follow cam, tight FOV, slight bob (PRD 9 third-person recommendation)
-  const camDist = 6.2, camHeight = 4.2;
-  const desired = new V3(
-    state.pos.x - fwd.x * camDist,
-    camHeight,
-    state.pos.z - fwd.z * camDist
-  );
-  camera.position.lerp(desired, 1 - Math.pow(0.0009, dt));
+  // third-person follow cam WITH WALL COLLISION (no clipping through geometry)
+  const camHeight = 4.2;
+  let camDist = cameraClampDist(state.pos.x, state.pos.z, -fwd.x, -fwd.z, 6.2, 0.5);
+  camDist = Math.max(1.8, camDist);   // never jam fully into the player
+  const desired = new V3(state.pos.x - fwd.x * camDist, camHeight, state.pos.z - fwd.z * camDist);
+  // snap IN instantly when a wall pulls the cam closer (no clip); ease OUT smoothly
+  const curD = Math.hypot(camera.position.x - state.pos.x, camera.position.z - state.pos.z);
+  if (camDist < curD - 0.05) camera.position.set(desired.x, desired.y, desired.z);
+  else camera.position.lerp(desired, 1 - Math.pow(0.0009, dt));
+  // hard safety clamp after the move: never let a wall sit between camera and player
+  {
+    const dx = camera.position.x - state.pos.x, dz = camera.position.z - state.pos.z;
+    const d = Math.hypot(dx, dz) || 1e-3;
+    const safe = cameraClampDist(state.pos.x, state.pos.z, dx / d, dz / d, d, 0.4);
+    if (safe < d) { camera.position.x = state.pos.x + (dx / d) * safe; camera.position.z = state.pos.z + (dz / d) * safe; }
+  }
   camera.lookAt(state.pos.x + fwd.x * 2, 1.4, state.pos.z + fwd.z * 2);
 
   // win check: reach the open threshold
@@ -873,14 +998,99 @@ function updatePlayer(dt) {
    ============================================================ */
 function updateRoster() {
   const el = document.getElementById("roster");
-  let html = `<div style="color:#6a8088;margin-bottom:4px;letter-spacing:2px;">SURVIVORS</div>`;
-  html += `<div class="who"><span><span class="dot" style="background:#6fd3e0"></span>You</span><span class="seen">self</span></div>`;
+  let html = `<div style="color:#9a7e84;margin-bottom:4px;letter-spacing:2px;">SURVIVORS</div>`;
+  html += `<div class="who"><span><span class="dot" style="background:#ffb066"></span>You</span><span class="seen">self</span></div>`;
   for (const b of bots) {
     const cls = b.visible ? "seen" : "unseen";
     const tag = b.visible ? "in sight" : "unverified";
     html += `<div class="who"><span><span class="dot" style="background:${b.colorHex}"></span>${b.name}</span><span class="${cls}">${tag}</span></div>`;
   }
   el.innerHTML = html;
+}
+
+/* ---- MINIMAP (top-right 2D canvas; north-up; crimson). Shows anchors+convergence,
+       portals, live teammates, and the player heading. Redrawn each frame. ---- */
+const miniCanvas = document.getElementById("minimap");
+const miniCtx = miniCanvas ? miniCanvas.getContext("2d") : null;
+const MINI = { size: 170, pad: 12, WX: 40, WZ: 35, crimson: "#e0303f", crimsonDim: "#7a1822", grid: "rgba(190,40,55,0.10)", amber: "#ffc24a" };
+function worldToMap(wx, wz) {
+  const inner = MINI.size - MINI.pad * 2;
+  return [MINI.pad + ((wx + MINI.WX) / (MINI.WX * 2)) * inner, MINI.pad + ((wz + MINI.WZ) / (MINI.WZ * 2)) * inner];
+}
+function miniScaleX(len) { return (len / (MINI.WX * 2)) * (MINI.size - MINI.pad * 2); }
+function miniScaleZ(len) { return (len / (MINI.WZ * 2)) * (MINI.size - MINI.pad * 2); }
+function miniDot(x, y, r, fill, stroke) {
+  miniCtx.beginPath(); miniCtx.arc(x, y, r, 0, Math.PI * 2);
+  if (fill) { miniCtx.fillStyle = fill; miniCtx.fill(); }
+  if (stroke) { miniCtx.lineWidth = 1.5; miniCtx.strokeStyle = stroke; miniCtx.stroke(); }
+}
+function miniDiamond(x, y, s, fill, stroke) {
+  miniCtx.beginPath(); miniCtx.moveTo(x, y - s); miniCtx.lineTo(x + s, y); miniCtx.lineTo(x, y + s); miniCtx.lineTo(x - s, y); miniCtx.closePath();
+  if (fill) { miniCtx.fillStyle = fill; miniCtx.fill(); }
+  if (stroke) { miniCtx.lineWidth = 1.5; miniCtx.strokeStyle = stroke; miniCtx.stroke(); }
+}
+function drawMinimap() {
+  if (!miniCtx) return;
+  const ctx = miniCtx, S = MINI.size;
+  ctx.clearRect(0, 0, S, S);
+  ctx.strokeStyle = MINI.grid; ctx.lineWidth = 1; ctx.beginPath();
+  for (let i = 1; i < 4; i++) { const p = (S / 4) * i; ctx.moveTo(p, 0); ctx.lineTo(p, S); ctx.moveTo(0, p); ctx.lineTo(S, p); }
+  ctx.stroke();
+
+  // walls — the actual level layout, so the minimap shows the WHOLE MAP (not just blips)
+  ctx.fillStyle = "rgba(180,40,55,0.16)";
+  for (const w of walls) {
+    const [wx, wy] = worldToMap(w.x, w.z);
+    const ww = Math.max(1, miniScaleX(w.w)), wh = Math.max(1, miniScaleZ(w.d));
+    ctx.fillRect(wx - ww / 2, wy - wh / 2, ww, wh);
+  }
+
+  // convergence ring
+  const [cx, cy] = worldToMap(convergence.position.x, convergence.position.z);
+  const cr = Math.max(6, miniScaleX(3.2));
+  ctx.beginPath(); ctx.arc(cx, cy, cr, 0, Math.PI * 2); ctx.lineWidth = 2;
+  ctx.strokeStyle = state.exitOpen ? "#9ff0c0" : MINI.crimson; ctx.stroke();
+  ctx.globalAlpha = 0.12 + (state.placed / 3) * 0.18;
+  ctx.fillStyle = state.exitOpen ? "#9ff0c0" : MINI.crimson; ctx.fill(); ctx.globalAlpha = 1;
+
+  // portals / doorways
+  for (const pr of portalPairs) {
+    const col = "#" + pr.color.toString(16).padStart(6, "0");
+    for (const end of [pr.a, pr.b]) {
+      const [px, py] = worldToMap(end.pos.x, end.pos.z);
+      miniDot(px, py, 4.2, "rgba(0,0,0,0)", col); miniDot(px, py, 1.6, col, null);
+    }
+  }
+  // curved-pocket portals (added in Wave 3) if present
+  if (typeof curvedPortals !== "undefined") for (const cp of curvedPortals) {
+    const [px, py] = worldToMap(cp.pos.x, cp.pos.z);
+    miniDot(px, py, 4.6, "rgba(0,0,0,0)", "#c59bff"); miniDot(px, py, 1.8, "#c59bff", null);
+  }
+
+  // anchors (live; placed = gold ring, carried = hollow, loose = solid crimson)
+  for (const a of anchors) {
+    const ap = a.mesh.position; const [ax, ay] = worldToMap(ap.x, ap.z);
+    const carried = (a.carriedBy === "player") || (state.carrying === a);
+    if (a.placed) miniDiamond(ax, ay, 4.5, MINI.crimson, MINI.amber);
+    else if (carried) miniDiamond(ax, ay, 4, "rgba(0,0,0,0)", MINI.crimsonDim);
+    else miniDiamond(ax, ay, 4.5, MINI.crimson, "#ff9aa6");
+  }
+  // teammates (ALWAYS LIVE); brighter + white ring when in sight
+  for (const b of bots) {
+    const [bx, by] = worldToMap(b.pos.x, b.pos.z);
+    ctx.globalAlpha = b.visible ? 1 : 0.7;
+    miniDot(bx, by, b.visible ? 4.5 : 3.5, b.colorHex, b.visible ? "#fff" : null);
+    ctx.globalAlpha = 1;
+  }
+  // player heading arrow
+  const [mx, my] = worldToMap(state.pos.x, state.pos.z);
+  const fx = Math.sin(state.yaw), fz = Math.cos(state.yaw), px = -fz, pz = fx, tip = 8, base = 5;
+  ctx.beginPath();
+  ctx.moveTo(mx + fx * tip, my + fz * tip);
+  ctx.lineTo(mx + px * base - fx * 4, my + pz * base - fz * 4);
+  ctx.lineTo(mx - px * base - fx * 4, my - pz * base - fz * 4);
+  ctx.closePath();
+  ctx.fillStyle = "#fff"; ctx.strokeStyle = MINI.crimson; ctx.lineWidth = 1.5; ctx.fill(); ctx.stroke();
 }
 
 let lightningT = 0, nextBolt = 4;
@@ -919,8 +1129,8 @@ function updateAtmosphere(dt) {
     lightningT -= dt;
     const f = Math.max(0, lightningT / 0.28) * (Math.random() > 0.4 ? 1 : 0.3);
     document.getElementById("flash").style.opacity = f * 0.5;
-    scene.userData.hemi.intensity = 0.5 + f * 2.2;
-  } else { document.getElementById("flash").style.opacity = 0; scene.userData.hemi.intensity = 0.5; }
+    scene.userData.hemi.intensity = 0.75 + f * 2.2;
+  } else { document.getElementById("flash").style.opacity = 0; scene.userData.hemi.intensity = 0.75; }
 
   // distort decay
   if (distortT > 0) {
@@ -944,7 +1154,7 @@ function updateTimer(dt) {
   if (state.timeLeft <= 0) { state.timeLeft = 0; endGame(false, "Time ran out. The Upside Down keeps what it catches."); }
   const m = Math.floor(state.timeLeft / 60), s = Math.floor(state.timeLeft % 60);
   document.getElementById("time").textContent = `${m}:${s.toString().padStart(2, "0")}`;
-  if (state.timeLeft < 60) document.getElementById("time").style.color = "#ff7a8a";
+  if (state.timeLeft < 60) document.getElementById("time").style.color = "#ff2f44";
 }
 
 function endGame(won, msg) {
@@ -972,6 +1182,7 @@ function loop() {
   const dt = Math.min(0.05, clock.getDelta());
   if (running && !gameOver) {
     updatePlayer(dt);
+    updatePlayerAnim(dt);
     updatePortals(dt);
     updateBots(dt);
     updateAnchors(dt);
@@ -980,6 +1191,7 @@ function loop() {
     updateWardenFigure(dt);
     updateTimer(dt);
     updateRoster();
+    drawMinimap();
   }
   if (scene) updateAtmosphere(dt);
   if (renderer) renderer.render(scene, camera);
@@ -1002,7 +1214,7 @@ function fatal(msg) {
   const sub = document.getElementById("topsub");
   if (sub) sub.textContent = msg;
   const sb = document.querySelector("#start .tag");
-  if (sb) sb.innerHTML = `<b style="color:#ff7a8a">${msg}</b><br><br>` + sb.innerHTML;
+  if (sb) sb.innerHTML = `<b style="color:#ff2f44">${msg}</b><br><br>` + sb.innerHTML;
   console.error("[THRESHOLD]", msg);
 }
 
