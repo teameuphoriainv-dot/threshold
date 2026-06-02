@@ -594,7 +594,7 @@ function updatePortals(dt) {
         camera.position.set(state.pos.x - fx * 6.2, 4.2, state.pos.z - fz * 6.2); // snap, no sweep
         portalCooldown = 1.4; portalGuard = exit;
         document.getElementById("flash").style.opacity = 0.55;  // mask the cut (PRD 7)
-        distortT = 0.5;
+        distortT = 0.5; addTrauma(0.4);
         return;
       }
     }
@@ -621,6 +621,7 @@ function reshapeRoom() {
   walls[s.idx].x = slot.x; walls[s.idx].z = slot.z;
   s.mesh.position.x = slot.x; s.mesh.position.z = slot.z;
   distortT = 1.0;
+  addTrauma(0.3);
   document.getElementById("flash").style.opacity = 0.35;
   sysMsg("a corridor just rewrote itself behind you.");
   return true;
@@ -822,8 +823,11 @@ function announcePhase() {
   if (state.phase === 3) { sysMsg("something vast just turned its attention toward you."); document.getElementById("danger").style.opacity = 0.5; }
 }
 
-let distortT = 0, glitchT = 0;
-function distortPulse() { distortT = 1.2; document.getElementById("glitch").style.opacity = 0.6; }
+let distortT = 0, glitchT = 0, trauma = 0;
+// smooth time-coherent shake noise (NOT per-frame random — avoids the nausea/static look)
+function shakeNoise(t, seed) { return Math.sin(t * 13.7 + seed) * 0.5 + Math.sin(t * 7.3 + seed * 2.1) * 0.3 + Math.sin(t * 23.1 + seed * 4.7) * 0.2; }
+function addTrauma(x) { trauma = Math.min(1, trauma + x); }
+function distortPulse() { distortT = 1.2; addTrauma(0.35); document.getElementById("glitch").style.opacity = 0.6; }
 function manifest() {
   // place the entity a bit in front-ish of the player and let it stutter-stand
   const ang = state.yaw + (Math.random() - 0.5) * 1.4;
@@ -832,6 +836,7 @@ function manifest() {
   wardenFigure.userData.life = 9;
   wardenFigure.userData.aura.intensity = 2.2;
   document.getElementById("danger").style.opacity = 0.7;
+  addTrauma(0.85);   // big rare event gets the big shake (trauma budget reserved for the Warden)
   sysMsg("IT IS HERE. do not let it corner you.");
 }
 
@@ -957,11 +962,19 @@ function updatePlayer(dt) {
   if (keys["KeyA"]) move.sub(right);
 
   const runHeld = (keys["ShiftLeft"] || keys["ShiftRight"]) && !state.carrying;
-  let speed = PLAYER_SPEED * (state.carrying ? CARRY_SLOW : (runHeld ? RUN_MULT : 1));
-  if (move.lengthSq() > 0) {
-    move.normalize();
-    let nx = state.pos.x + move.x * speed * dt;
-    let nz = state.pos.z + move.z * speed * dt;
+  const speed = PLAYER_SPEED * (state.carrying ? CARRY_SLOW : (runHeld ? RUN_MULT : 1));
+  // exponential accel toward desired velocity (weighty but responsive); decel slightly slower
+  let dvx = 0, dvz = 0;
+  if (move.lengthSq() > 0) { move.normalize(); dvx = move.x * speed; dvz = move.z * speed; }
+  const acceling = (dvx !== 0 || dvz !== 0);
+  const a = 1 - Math.exp(-(acceling ? 16 : 11) * dt);
+  state.vel.x += (dvx - state.vel.x) * a;
+  state.vel.z += (dvz - state.vel.z) * a;
+  // small instant kick on first press so control never feels mushy
+  if (acceling && state.vel.x * state.vel.x + state.vel.z * state.vel.z < 0.4) { state.vel.x += dvx * 0.16; state.vel.z += dvz * 0.16; }
+  if (Math.abs(state.vel.x) > 1e-3 || Math.abs(state.vel.z) > 1e-3) {
+    let nx = state.pos.x + state.vel.x * dt;
+    let nz = state.pos.z + state.vel.z * dt;
     [nx, nz] = collide(nx, nz, PLAYER_R);
     state.pos.set(nx, 0, nz);
   }
@@ -969,9 +982,14 @@ function updatePlayer(dt) {
   // RobotExpressive faces +Z; add PI so it faces the move/look direction. Capsule keeps un-flipped.
   playerMesh.rotation.y = Math.atan2(fwd.x, fwd.z) + (playerModel ? Math.PI : 0);
 
-  // third-person follow cam WITH WALL COLLISION (no clipping through geometry)
+  // third-person follow cam WITH WALL COLLISION + WHISKERS (no clipping through geometry)
   const camHeight = 4.2;
-  let camDist = cameraClampDist(state.pos.x, state.pos.z, -fwd.x, -fwd.z, 6.2, 0.5);
+  let camDist = 6.2;
+  for (const ang of [0, 0.22, -0.22]) {   // whisker fan around the back direction catches corners
+    const c = Math.cos(ang), s = Math.sin(ang);
+    const dx = -fwd.x * c - (-fwd.z) * s, dz = -fwd.x * s + (-fwd.z) * c;
+    camDist = Math.min(camDist, cameraClampDist(state.pos.x, state.pos.z, dx, dz, 6.2, 0.5));
+  }
   camDist = Math.max(1.8, camDist);   // never jam fully into the player
   const desired = new V3(state.pos.x - fwd.x * camDist, camHeight, state.pos.z - fwd.z * camDist);
   // snap IN instantly when a wall pulls the cam closer (no clip); ease OUT smoothly
@@ -1132,13 +1150,14 @@ function updateAtmosphere(dt) {
     scene.userData.hemi.intensity = 0.75 + f * 2.2;
   } else { document.getElementById("flash").style.opacity = 0; scene.userData.hemi.intensity = 0.75; }
 
-  // distort decay
-  if (distortT > 0) {
-    distortT -= dt;
-    const shake = distortT * 0.12;
-    camera.position.x += (Math.random() - 0.5) * shake;
-    camera.position.y += (Math.random() - 0.5) * shake;
-    if (distortT <= 0) document.getElementById("glitch").style.opacity = 0;
+  // distort glitch-overlay decay
+  if (distortT > 0) { distortT -= dt; if (distortT <= 0) document.getElementById("glitch").style.opacity = 0; }
+  // trauma-based screen shake: smooth noise + trauma^2 falloff, reserved for big events (anti-nausea)
+  if (trauma > 0) {
+    trauma = Math.max(0, trauma - dt * 0.8);
+    const amt = trauma * trauma * 0.55, tt = now * 26;
+    camera.position.x += shakeNoise(tt, 1.0) * amt;
+    camera.position.y += shakeNoise(tt, 5.3) * amt;
   }
 
   // vignette tightens with danger/phase
