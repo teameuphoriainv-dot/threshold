@@ -374,7 +374,7 @@ function buildBots() {
   ];
   defs.forEach((d, i) => {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry ? new THREE.CapsuleGeometry(0.45, 1.1, 4, 8) : new THREE.CylinderGeometry(0.45, 0.45, 1.8, 8),
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.8, 10),
       new THREE.MeshStandardMaterial({ color: 0x111418, emissive: d.color, emissiveIntensity: 0.35, roughness: 0.6 }));
     body.position.y = 1;
     g.add(body);
@@ -998,12 +998,31 @@ function startGame() {
   setTimeout(() => sysMsg("remember: a message only glows if you can SEE who sent it."), 4500);
 }
 
+function fatal(msg) {
+  const sub = document.getElementById("topsub");
+  if (sub) sub.textContent = msg;
+  const sb = document.querySelector("#start .tag");
+  if (sb) sb.innerHTML = `<b style="color:#ff7a8a">${msg}</b><br><br>` + sb.innerHTML;
+  console.error("[THRESHOLD]", msg);
+}
+
 window.addEventListener("load", () => {
-  buildWorld();
-  clock = new THREE.Clock();
-  loop();
+  // Wire controls FIRST so a render error can never leave the button dead.
   document.getElementById("startBtn").addEventListener("click", startGame);
   document.getElementById("againBtn").addEventListener("click", () => location.reload());
+
+  if (typeof THREE === "undefined") {
+    fatal("3D engine failed to load (Three.js CDN blocked). Check your connection, then reload.");
+    return;
+  }
+  try {
+    buildWorld();
+    clock = new THREE.Clock();
+    loop();
+  } catch (e) {
+    fatal("World failed to build: " + e.message);
+    throw e;
+  }
 });
 </script>
 </body>
