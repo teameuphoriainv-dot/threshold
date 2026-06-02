@@ -8,7 +8,7 @@ A non-Euclidean multiplayer horror game where an LLM-powered entity hunts you th
 
 No install. Open the file in a browser:
 
-- **`index.html`** — the playable vertical slice. Find 3 anchors, carry them to the convergence ring, escape. The Warden forges chat messages from teammates you can't see — line-of-sight is the only thing that exposes them. Includes seamless teleport portals (loops + "bigger on the inside") and corridors that rewrite themselves while you aren't looking.
+- **`index.html`** — the playable vertical slice. Find 3 anchors, carry them to the convergence ring, escape. The Warden forges chat messages from teammates you can't see — line-of-sight is the only thing that exposes them. Includes teleport portals (loops + "bigger on the inside") and corridors that rewrite themselves while you aren't looking. A rigged character, top-right minimap, and crimson Upside-Down aesthetic.
 - **`hyperbolic-spike.html`** — true hyperbolic-geometry renderer (hyperboloid / Minkowski model, Lorentz-boost movement), modeled on [HackerPoet/HyperEngine](https://github.com/HackerPoet/HyperEngine) (the Unity backend for CodeParade's *Hyperbolica*, MIT). The wow-factor track for the non-Euclidean world.
 
 ```bash
@@ -16,6 +16,18 @@ No install. Open the file in a browser:
 python3 -m http.server 8000
 # then open http://localhost:8000/index.html
 ```
+
+**Controls:** `W A S D` move · `← →` / `J L` turn · `Shift` run · `Space` jump · `G` grab · `E` pick up / place anchor.
+
+**Verify a change didn't break the boot:** `node scripts/boot-test.js index.html` — an r128-accurate Three.js stub that builds the world, runs live frames, and simulates the start button, catching runtime errors without a browser. Run it after edits.
+
+## Build status (handoff)
+
+- **Done:** trust/mimicry loop, crimson lighter UI, top-right minimap (full wall layout + anchors/convergence/portals/live teammates), rigged RobotExpressive character (walk/run/jump/grab + capsule fallback), third-person camera wall-collision (whiskers), movement acceleration, trauma-based screen shake.
+- **Next — designed + adversarially verified, integration pending:**
+  - **Wave 2:** seamless render-through portals (CodeParade "Non-Euclidean Worlds Engine" — render-to-texture, see *into* the next room through the doorway).
+  - **Wave 3:** true curved-space pocket (spherical: world wraps, see your own back; hyperboloid math in `hyperbolic-spike.html`). Add a sealed onboarding pocket *before* the Warden activates so players get "sea legs."
+- **Stack target (42h build):** bots → real players via **SpacetimeDB**; local Warden → privileged Node client calling an **LLM** for forged-message text (hooks marked `>>> SPACETIME` / `>>> LLM` in `index.html`).
 
 ## The core mechanic (the pitch)
 
