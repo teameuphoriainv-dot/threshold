@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>THRESHOLD — Hyperbolic Spike</title>
+<!--
+  HYPERBOLIC SPIKE — true non-Euclidean rendering, modeled on
+  HackerPoet/HyperEngine (the Unity backend for CodeParade's Hyperbolica), MIT licensed.
+  Ported here to our Three.js / WebGL stack.
+
+  THE MATH (hyperboloid / Minkowski model of the hyperbolic plane H^2):
+    - Every world point lives on the upper hyperboloid:  x^2 + y^2 - z^2 = -1,  z > 0
+      with the Minkowski inner product  <a,b> = a.x*b.x + a.y*b.y - a.z*b.z.
+    - The player carries an orthonormal frame on the hyperboloid:
+        P = position (timelike, <P,P> = -1)
+        T = forward tangent (spacelike, <T,T> = +1, <T,P> = 0)
+        U = right   tangent (spacelike, <U,U> = +1, orthogonal to P,T)
+    - MOVEMENT IS A LORENTZ BOOST (not a translation):
+        forward by d:  P' = cosh(d)P + sinh(d)T,   T' = sinh(d)P + cosh(d)T
+        turn by a:     T' = cos(a)T + sin(a)U,      U' = -sin(a)T + cos(a)U
+    - To draw a fixed world point h, we read its coordinates in the player's frame
+      (a = <h,U>, b = <h,T>, c = -<h,P> = cosh(distance)) and use the geodesic-polar
+      (exponential-map) projection r = acosh(c), v = (a,b) * r / sinh(r). That v is
+      exactly what a hyperbolic observer "sees", fed to a normal perspective camera.
+
+  WHY IT LOOKS IMPOSSIBLE: circumference grows like e^r, so there is exponentially
+  MORE space the farther you go. Walk a "square" and you never close the loop. Turn,
+  and the entire world re-projects around your new center.
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #04060b; }
+  body { font-family: "Courier New", ui-monospace, monospace; color: #cfe3e8; }
+  canvas { display: block; }
+  #vignette { position: fixed; inset: 0; pointer-events: none; z-index: 5; box-shadow: inset 0 0 220px 70px rgba(0,0,0,0.92); }
+  #grain { position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0.05; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"); }
+  .panel { position: fixed; background: rgba(6,10,16,0.72); border: 1px solid rgba(80,150,160,0.25);
+    padding: 12px 16px; backdrop-filter: blur(2px); letter-spacing: 0.5px; z-index: 10; font-size: 12px; line-height: 1.6; }
+  #info { top: 16px; left: 16px; max-width: 360px; }
+  #info b { color: #7fe0ec; letter-spacing: 2px; }
+  #info .dim { color: #6a8088; }
+  #ctrls { bottom: 16px; left: 16px; }
+  #ctrls b { color: #cfe3e8; }
+  #back { top: 16px; right: 16px; color: #8be9ff; text-decoration: none; }
+  #back:hover { text-shadow: 0 0 12px rgba(140,233,255,0.6); }
+  #stat { bottom: 16px; right: 16px; color: #ffcaa0; text-align: right; }
+</style>
+</head>
+<body>
+<div id="vignette"></div>
+<div id="grain"></div>
+<div class="panel" id="info">
+  <b>HYPERBOLIC SPIKE</b><br>
+  <span class="dim">true non-Euclidean space — hyperboloid model, Lorentz-boost movement. modeled on HackerPoet/HyperEngine (Hyperbolica).</span><br><br>
+  Walk outward: there is <i>exponentially more world</i> than should fit. Turn, and reality re-projects around you. A square path will never close.
+</div>
+<a class="panel" id="back" href="index.html">&larr; back to THRESHOLD</a>
+<div class="panel" id="ctrls"><b>W / S</b> move &nbsp;·&nbsp; <b>A / D</b> or <b>&larr; &rarr;</b> turn</div>
+<div class="panel" id="stat">dist from origin: <span id="dist">0.00</span></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+
+/* ---------- Minkowski math on 3-vectors [x, y, z], metric diag(1,1,-1) ---------- */
+const mink = (a, b) => a[0]*b[0] + a[1]*b[1] - a[2]*b[2];
+const scale = (a, s) => [a[0]*s, a[1]*s, a[2]*s];
+const add = (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
+
+/* player frame on the hyperboloid (orthonormal in the Minkowski metric) */
+let P = [0, 0, 1];   // position  (<P,P> = -1)
+let T = [0, 1, 0];   // forward   (<T,T> = +1)
+let U = [1, 0, 0];   // right     (<U,U> = +1)
+
+function renormFrame() {
+  // Minkowski Gram-Schmidt — keeps the frame on the hyperboloid despite float drift.
+  P = scale(P, 1 / Math.sqrt(-mink(P, P)));                 // <P,P> = -1
+  T = add(T, scale(P, mink(T, P)));                          // remove P-component (mink(P,P)=-1)
+  T = scale(T, 1 / Math.sqrt(mink(T, T)));                   // <T,T> = +1
+  U = add(U, scale(P, mink(U, P)));
+  U = add(U, scale(T, -mink(U, T)));
+  U = scale(U, 1 / Math.sqrt(mink(U, U)));
+}
+
+function moveForward(d) {
+  const ch = Math.cosh(d), sh = Math.sinh(d);
+  const nP = add(scale(P, ch), scale(T, sh));
+  const nT = add(scale(P, sh), scale(T, ch));
+  P = nP; T = nT;
+}
+function turn(a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  const nT = add(scale(T, c), scale(U, s));
+  const nU = add(scale(T, -s), scale(U, c));
+  T = nT; U = nU;
+}
+
+/* ---------- scene ---------- */
+let scene, camera, renderer, clock;
+const pillars = [];   // { h:[x,y,z] on hyperboloid, mesh }
+const EYE = 1.4, MAX_R = 6.5;
+
+function hyperboloidPoint(r, theta) {
+  return [Math.sinh(r) * Math.cos(theta), Math.sinh(r) * Math.sin(theta), Math.cosh(r)];
+}
+
+function buildScene() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x04060b);
+  scene.fog = new THREE.FogExp2(0x05080f, 0.07);
+
+  camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 200);
+  camera.position.set(0, EYE, 0);
+  camera.lookAt(0, EYE, -1);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0x1a2630, 0.7));
+  const key = new THREE.PointLight(0x6fd3e0, 2.2, 30, 2);
+  key.position.set(0, 5, 0);
+  scene.add(key);
+
+  // floor disk (the visible "ground" of the hyperbolic plane)
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(MAX_R * 1.4, 64),
+    new THREE.MeshStandardMaterial({ color: 0x081019, roughness: 0.5, metalness: 0.3, emissive: 0x021015 }));
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+
+  // pillars on hyperbolic circles. count ~ circumference ~ 2*pi*sinh(r) => exponential growth.
+  const sharedGeo = new THREE.CylinderGeometry(0.10, 0.16, 3.2, 6);
+  let total = 0;
+  for (let r = 0.7; r <= MAX_R; r += 0.62) {
+    const circ = 2 * Math.PI * Math.sinh(r);
+    const n = Math.min(64, Math.max(4, Math.round(circ * 0.9)));
+    for (let i = 0; i < n && total < 900; i++) {
+      const theta = (i / n) * Math.PI * 2 + r * 0.35;
+      const tealToAmber = Math.min(1, r / MAX_R);
+      const col = new THREE.Color().setHSL(0.52 - tealToAmber * 0.45, 0.7, 0.5);
+      const mesh = new THREE.Mesh(sharedGeo, new THREE.MeshStandardMaterial({
+        color: 0x0a1e22, emissive: col, emissiveIntensity: 1.1, roughness: 1 }));
+      mesh.position.y = 1.6;
+      scene.add(mesh);
+      pillars.push({ h: hyperboloidPoint(r, theta), mesh });
+      total++;
+    }
+  }
+  addEventListener("resize", () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+}
+
+/* project every world point into the player's frame via the exponential map */
+function projectWorld() {
+  for (const p of pillars) {
+    const h = p.h;
+    const a = mink(h, U);        // right component
+    const b = mink(h, T);        // forward component
+    let c = -mink(h, P);         // cosh(distance), >= 1
+    if (c < 1) c = 1;
+    const r = Math.acosh(c);
+    if (r > MAX_R + 0.4) { p.mesh.visible = false; continue; }
+    p.mesh.visible = true;
+    const sh = Math.sqrt(Math.max(1e-6, c * c - 1));   // sinh(r)
+    const k = r < 1e-4 ? 1 : r / sh;
+    const vx = a * k, vy = b * k;                       // geodesic-polar (normal) coords
+    // forward (+vy) goes INTO the screen (-z); right (+vx) is +x
+    p.mesh.position.set(vx, 1.6, -vy);
+    const fade = 1 - Math.min(1, r / (MAX_R + 0.4));
+    p.mesh.material.emissiveIntensity = 0.3 + fade * 1.3;
+  }
+}
+
+/* ---------- input + loop ---------- */
+const keys = {};
+addEventListener("keydown", e => keys[e.code] = true);
+addEventListener("keyup", e => keys[e.code] = false);
+
+function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.05, clock.getDelta());
+
+  const turnSpeed = 1.6, moveSpeed = 1.5;
+  if (keys["KeyA"] || keys["ArrowLeft"]) turn(turnSpeed * dt);
+  if (keys["KeyD"] || keys["ArrowRight"]) turn(-turnSpeed * dt);
+  if (keys["KeyW"] || keys["ArrowUp"]) moveForward(moveSpeed * dt);
+  if (keys["KeyS"] || keys["ArrowDown"]) moveForward(-moveSpeed * dt);
+  renormFrame();
+
+  projectWorld();
+
+  // subtle breathing bob
+  camera.position.y = EYE + Math.sin(performance.now() * 0.0012) * 0.04;
+  camera.lookAt(0, EYE, -1);
+
+  document.getElementById("dist").textContent = Math.acosh(Math.max(1, -mink(P, [0, 0, 1]))).toFixed(2);
+  renderer.render(scene, camera);
+}
+
+window.addEventListener("load", () => {
+  buildScene();
+  clock = new THREE.Clock();
+  loop();
+});
+</script>
+</body>
+</html>

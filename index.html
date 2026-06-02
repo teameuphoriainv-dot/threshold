@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>THRESHOLD</title>
+<!--
+  THRESHOLD - playable vertical slice (single-file, zero-install).
+  This proves the SOUL of the PRD: the trust/mimicry mechanic + Upside Down atmosphere.
+
+  WHAT IS REAL HERE:
+    - Third-person world, atmosphere, anchors->convergence->escape loop
+    - Line-of-sight trust verification (PRD 5.1)
+    - The Warden forging messages "as" a teammate you can't see (PRD 5.2) -- the demo moment
+    - Local rule-based Warden with energy + escalation phases (PRD 6)
+
+  WHAT THE 42h BUILD SWAPS IN (hooks marked >>> SPACETIME / >>> LLM below):
+    - Bots -> real players synced via SpacetimeDB tables/reducers
+    - Local Warden -> privileged Node client subscribing to state, calling an LLM for MIMIC text
+    - forged flag -> server-only column hidden by subscription filtering
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #05070c; }
+  body { font-family: "Courier New", ui-monospace, monospace; color: #cfe3e8; cursor: default; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* --- post overlays (cheap "post-processing") --- */
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    box-shadow: inset 0 0 240px 60px rgba(0,0,0,0.9);
+    transition: box-shadow 0.6s ease;
+  }
+  #grain {
+    position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0.05;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    mix-blend-mode: overlay;
+  }
+  #flash { position: fixed; inset: 0; pointer-events: none; z-index: 4; background: #aeb9ff; opacity: 0; }
+  #danger { position: fixed; inset: 0; pointer-events: none; z-index: 4; background: radial-gradient(ellipse at center, rgba(120,0,20,0) 40%, rgba(150,0,30,0.35) 100%); opacity: 0; transition: opacity 0.4s; }
+  #glitch { position: fixed; inset: 0; pointer-events: none; z-index: 7; opacity: 0;
+    background: repeating-linear-gradient(0deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, transparent 2px, transparent 4px); }
+
+  /* --- HUD --- */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+  .panel { position: absolute; background: rgba(6,10,16,0.72); border: 1px solid rgba(80,150,160,0.25);
+    padding: 10px 14px; backdrop-filter: blur(2px); letter-spacing: 0.5px; }
+  #top { top: 16px; left: 50%; transform: translateX(-50%); text-align: center; min-width: 280px; }
+  #top .title { font-size: 13px; color: #6fd3e0; letter-spacing: 4px; }
+  #top .sub { font-size: 11px; color: #6a8088; margin-top: 2px; }
+  #anchors { top: 16px; left: 16px; font-size: 13px; }
+  #anchors .n { color: #8be9ff; font-size: 20px; }
+  #timer { top: 16px; right: 16px; font-size: 13px; text-align: right; }
+  #timer .t { color: #ffd28b; font-size: 20px; }
+  #phase { color: #c98; font-size: 11px; margin-top: 4px; }
+
+  #roster { bottom: 16px; right: 16px; font-size: 12px; min-width: 180px; }
+  #roster .who { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+  #roster .seen { color: #ffcaa0; }
+  #roster .unseen { color: #5b6f76; }
+  #roster .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align: middle; }
+
+  /* --- chat --- */
+  #chat { position: fixed; bottom: 16px; left: 16px; width: 360px; z-index: 11; pointer-events: none; }
+  #log { max-height: 220px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+  .msg { background: rgba(6,10,16,0.66); border-left: 3px solid #444; padding: 6px 10px; margin-top: 6px;
+    font-size: 13px; line-height: 1.3; animation: rise 0.25s ease; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .msg .name { font-weight: bold; }
+  .msg .verified { font-size: 10px; color: #ffcaa0; margin-left: 6px; letter-spacing: 1px; }
+  .msg .unknown { font-size: 10px; color: #6a7c83; margin-left: 6px; letter-spacing: 1px; }
+  .msg.sys { border-left-color: #2a6b73; color: #7fb8c0; font-style: italic; }
+  .msg.me { border-left-color: #6fd3e0; }
+
+  /* --- overlays (start / end) --- */
+  .screen { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, rgba(8,12,20,0.92), rgba(2,3,6,0.98)); text-align: center; }
+  .screen .box { max-width: 620px; padding: 32px; }
+  .screen h1 { font-size: 46px; letter-spacing: 12px; color: #7fe0ec; text-shadow: 0 0 24px rgba(80,200,220,0.5); }
+  .screen .tag { color: #6a8088; font-size: 13px; margin: 14px 0 22px; line-height: 1.6; letter-spacing: 1px; }
+  .screen .ctrls { color: #8aa; font-size: 12px; line-height: 1.9; margin: 18px 0; }
+  .screen .ctrls b { color: #cfe3e8; }
+  .btn { display: inline-block; margin-top: 18px; padding: 12px 30px; border: 1px solid #5fb0bd;
+    color: #bdeef5; letter-spacing: 3px; cursor: pointer; pointer-events: auto; background: rgba(20,40,46,0.4);
+    transition: all 0.2s; font-family: inherit; font-size: 14px; }
+  .btn:hover { background: rgba(40,90,100,0.6); box-shadow: 0 0 20px rgba(80,200,220,0.4); }
+  .screen.win h1 { color: #9ff0c0; }
+  .screen.lose h1 { color: #ff7a8a; }
+  .hidden { display: none !important; }
+  #interact { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 11;
+    color: #ffe2b0; font-size: 13px; letter-spacing: 2px; pointer-events: none; opacity: 0; transition: opacity 0.2s;
+    text-shadow: 0 0 10px rgba(0,0,0,0.9); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="vignette"></div>
+<div id="danger"></div>
+<div id="flash"></div>
+<div id="glitch"></div>
+<div id="grain"></div>
+
+<div id="hud">
+  <div class="panel" id="anchors">ANCHORS<br><span class="n" id="anchorN">0</span> / 3 secured</div>
+  <div class="panel" id="top"><div class="title">THRESHOLD</div><div class="sub" id="topsub">the world does not want you to leave</div></div>
+  <div class="panel" id="timer">ESCAPE IN<br><span class="t" id="time">10:00</span><div id="phase">phase 1 — it is watching</div></div>
+  <div class="panel" id="roster"></div>
+</div>
+
+<div id="chat"><div id="log"></div></div>
+<div id="interact">[ E ] pick up anchor</div>
+
+<!-- START -->
+<div class="screen" id="start">
+  <div class="box">
+    <h1>THRESHOLD</h1>
+    <div class="tag">
+      You are trapped in the Upside Down. Find <b>3 anchors</b>, carry them to the convergence ring,
+      and escape together.<br><br>
+      Your teammates <b>Mara</b> and <b>Cass</b> are out there. But the <b>Warden</b> controls this place —
+      and when you cannot see a teammate, any message bearing their name <i>might be the Warden wearing their voice.</i><br><br>
+      The only thing you can trust is what you can see with your own eyes.
+    </div>
+    <div class="ctrls">
+      <b>W A S D</b> — move &nbsp;·&nbsp; <b>← →</b> or <b>J / L</b> — turn &nbsp;·&nbsp; <b>E</b> — pick up / place anchor<br>
+      A message glows <span style="color:#ffcaa0">warm</span> only when you can <i>see</i> the sender. No glow = unverifiable.
+    </div>
+    <div class="btn" id="startBtn">ENTER THE THRESHOLD</div>
+  </div>
+</div>
+
+<!-- END -->
+<div class="screen hidden" id="end">
+  <div class="box">
+    <h1 id="endTitle">ESCAPED</h1>
+    <div class="tag" id="endMsg"></div>
+    <div class="btn" id="againBtn">CROSS AGAIN</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+/* ============================================================
+   THRESHOLD — game logic
+   ============================================================ */
+
+const V3 = THREE.Vector3;
+let scene, camera, renderer, clock;
+let running = false, gameOver = false;
+
+// ---- tunables ----
+const PLAYER_SPEED = 7.2;
+const PLAYER_R = 0.7;
+const CARRY_SLOW = 0.62;
+const MATCH_SECONDS = 600;          // 10 min (PRD 4.2: 8-12)
+const SEE_DIST = 22;                // line-of-sight range
+const SEE_FOV = Math.cos(THREE.MathUtils.degToRad(58)); // half-cone
+const PICKUP_DIST = 2.6;
+const PLACE_DIST = 3.6;
+const ABSORB_DIST = 2.4;
+
+// ---- state ----
+const state = {
+  yaw: 0,
+  pos: new V3(0, 0, 26),
+  vel: new V3(),
+  carrying: null,
+  placed: 0,
+  timeLeft: MATCH_SECONDS,
+  phase: 1,
+  absorbed: false,
+};
+
+let walls = [];        // {x,z,w,d} axis-aligned footprints for collision + LOS
+let wallMeshes = [];
+let anchors = [];      // {id,mesh,real,placed,carriedBy,pos}
+let bots = [];         // {id,name,color,mesh,glow,pos,target,visible}
+let playerMesh, playerGlow, convergence, exitGate, wardenFigure;
+let spores, tendrils = [];
+const flickerLights = [];
+
+// --- non-Euclidean state (PRD 7) ---
+let portalPairs = [];     // seamless teleport doorways: loops + "bigger on the inside"
+let reshapeables = [];    // wall segments the Warden rewrites while you aren't looking
+let portalCooldown = 0, portalGuard = null;
+
+// ---- input ----
+const keys = {};
+addEventListener("keydown", e => { keys[e.code] = true; });
+addEventListener("keyup", e => { keys[e.code] = false; });
+
+/* ============================================================
+   WORLD BUILD
+   ============================================================ */
+function buildWorld() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05080e);
+  scene.fog = new THREE.FogExp2(0x070b14, 0.035);
+
+  camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 400);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  document.getElementById("app").appendChild(renderer.domElement);
+
+  // ambient + hemisphere (cold)
+  scene.add(new THREE.AmbientLight(0x223040, 0.55));
+  const hemi = new THREE.HemisphereLight(0x12303a, 0x02040a, 0.5);
+  scene.add(hemi);
+  scene.userData.hemi = hemi;
+
+  // floor — wet, dark, faint teal sheen
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x0a121a, roughness: 0.45, metalness: 0.3, emissive: 0x02080a });
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+
+  // ceiling (low, oppressive)
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.MeshStandardMaterial({ color: 0x05080d, roughness: 1 }));
+  ceil.rotation.x = Math.PI / 2; ceil.position.y = 9;
+  scene.add(ceil);
+
+  buildRooms();
+  buildConvergence();
+  buildPortals();
+  buildAnchors();
+  buildBots();
+  buildPlayer();
+  buildSpores();
+  buildWardenFigure();
+
+  addEventListener("resize", onResize);
+}
+
+// Map: central hub + 3 satellite rooms via corridors. Walls are AABB footprints.
+function addWall(x, z, w, d) {
+  walls.push({ x, z, w, d });
+  const h = 9;
+  const mat = new THREE.MeshStandardMaterial({ color: 0x0c1620, roughness: 0.9, metalness: 0.1, emissive: 0x030a0c });
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, h / 2, z);
+  scene.add(m);
+  wallMeshes.push(m);
+  decorateWall(x, z, w, d);
+}
+
+// bioluminescent tendrils crawling the walls (PRD 3 "the vines")
+function decorateWall(x, z, w, d) {
+  const count = Math.max(2, Math.floor((w + d) * 0.5));
+  for (let i = 0; i < count; i++) {
+    const g = new THREE.CylinderGeometry(0.06, 0.13, 2 + Math.random() * 3, 5);
+    const teal = new THREE.MeshStandardMaterial({ color: 0x0a2a30, emissive: 0x10707a, emissiveIntensity: 0.7, roughness: 1 });
+    const t = new THREE.Mesh(g, teal);
+    const onX = Math.random() > 0.5;
+    t.position.set(
+      x + (onX ? (Math.random() - 0.5) * w : (Math.random() > 0.5 ? w / 2 : -w / 2)),
+      0.5 + Math.random() * 6,
+      z + (onX ? (Math.random() > 0.5 ? d / 2 : -d / 2) : (Math.random() - 0.5) * d)
+    );
+    t.rotation.z = (Math.random() - 0.5) * 1.2;
+    t.userData.phase = Math.random() * Math.PI * 2;
+    t.userData.baseRot = t.rotation.z;
+    scene.add(t);
+    tendrils.push(t);
+  }
+}
+
+function buildRooms() {
+  // outer boundary (40 x 70 arena, open in middle)
+  const B = 35;
+  addWall(0, -B, 80, 1.2);
+  addWall(0, B, 80, 1.2);
+  addWall(-40, 0, 1.2, 72);
+  addWall(40, 0, 1.2, 72);
+
+  // central hub partial walls
+  addWall(-9, -10, 14, 1);
+  addWall(9, -10, 14, 1);
+  addWall(-16, 0, 1, 22);
+  addWall(16, 0, 1, 22);
+
+  // north satellite room (anchor)
+  addWall(-22, -24, 1, 18);
+  addWall(22, -24, 1, 18);
+  addWall(-13, -33, 18, 1);
+  addWall(13, -33, 18, 1);
+
+  // west satellite room
+  addWall(-30, -6, 16, 1);
+  addWall(-30, 14, 16, 1);
+  addWall(-38, 4, 1, 18);
+
+  // east satellite room
+  addWall(30, -6, 16, 1);
+  addWall(30, 14, 16, 1);
+  addWall(38, 4, 1, 18);
+
+  // a couple of inner baffles to break sightlines (this is what makes mimicry bite)
+  addWall(-6, 18, 12, 1);
+  addWall(10, -22, 1, 12);
+
+  // shifting segments the Warden rewrites while they're out of view (non-Euclidean reshape)
+  addShifter(-7, -13, 8, 1, 8, -13);
+  addShifter(20, 7, 1, 8, 20, -9);
+  addShifter(-7, 12, 8, 1, 7, 12);
+
+  // scattered flickering point lights — unstable world (PRD 8)
+  const lp = [[0,-4],[-28,4],[28,4],[0,-28],[-4,16],[14,-18]];
+  for (const [lx, lz] of lp) {
+    const c = Math.random() > 0.6 ? 0xffb04a : 0x4aa6ff;
+    const pl = new THREE.PointLight(c, 1.1, 26, 2);
+    pl.position.set(lx, 4 + Math.random() * 2, lz);
+    pl.userData = { base: 1.1, phase: Math.random() * 10, dead: false };
+    scene.add(pl);
+    flickerLights.push(pl);
+  }
+}
+
+function buildConvergence() {
+  const g = new THREE.TorusGeometry(3.2, 0.18, 12, 48);
+  const m = new THREE.MeshStandardMaterial({ color: 0x103040, emissive: 0x1d6f8a, emissiveIntensity: 1.2 });
+  convergence = new THREE.Mesh(g, m);
+  convergence.rotation.x = Math.PI / 2;
+  convergence.position.set(0, 0.2, 4);
+  scene.add(convergence);
+
+  const pl = new THREE.PointLight(0x2bb0d0, 1.4, 18, 2);
+  pl.position.set(0, 2, 4);
+  scene.add(pl);
+  convergence.userData.light = pl;
+
+  // exit gate (revealed on win)
+  exitGate = new THREE.Mesh(new THREE.PlaneGeometry(5, 7),
+    new THREE.MeshBasicMaterial({ color: 0xaef0ff, transparent: true, opacity: 0 }));
+  exitGate.position.set(0, 3.5, 4);
+  scene.add(exitGate);
+}
+
+function makeAnchorMesh(real) {
+  const g = new THREE.Group();
+  const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.55),
+    new THREE.MeshStandardMaterial({ color: 0x0a2630, emissive: 0x33e0c0, emissiveIntensity: 1.6, roughness: 0.3 }));
+  g.add(core);
+  const halo = new THREE.PointLight(0x33e0c0, 1.2, 8, 2);
+  g.add(halo);
+  g.userData.core = core;
+  // NOTE: real & fake look identical (PRD 4.4) — no visual tell until placed.
+  return g;
+}
+
+function buildAnchors() {
+  // 3 real anchors in the satellite rooms
+  const spots = [
+    new V3(0, 0.9, -30),    // north
+    new V3(-34, 0.9, 5),    // west
+    new V3(34, 0.9, 5),     // east
+  ];
+  spots.forEach((p, i) => {
+    const mesh = makeAnchorMesh(true);
+    mesh.position.copy(p);
+    scene.add(mesh);
+    anchors.push({ id: "anchor" + i, mesh, real: true, placed: false, carriedBy: null, pos: p.clone() });
+  });
+  // >>> SPACETIME: in the real build, anchors live in the `anchors` table; pickup/place are reducers.
+}
+
+function buildBots() {
+  const defs = [
+    { name: "Mara", color: 0xff9a5c, start: new V3(-30, 0, 5) },
+    { name: "Cass", color: 0x9c7bff, start: new V3(30, 0, 5) },
+  ];
+  defs.forEach((d, i) => {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry ? new THREE.CapsuleGeometry(0.45, 1.1, 4, 8) : new THREE.CylinderGeometry(0.45, 0.45, 1.8, 8),
+      new THREE.MeshStandardMaterial({ color: 0x111418, emissive: d.color, emissiveIntensity: 0.35, roughness: 0.6 }));
+    body.position.y = 1;
+    g.add(body);
+    const glow = new THREE.PointLight(d.color, 1.3, 7, 2); // warm glow = "you are the only light that loves you"
+    glow.position.y = 1.2;
+    g.add(glow);
+    g.position.copy(d.start);
+    scene.add(g);
+    bots.push({
+      id: "bot" + i, name: d.name, color: d.color, colorHex: "#" + d.color.toString(16).padStart(6, "0"),
+      mesh: g, glow, pos: d.start.clone(), target: pickWaypoint(), visible: false, lastChat: 4 + i * 3,
+    });
+  });
+}
+
+function buildPlayer() {
+  playerMesh = new THREE.Group();
+  const body = new THREE.Mesh(
+    THREE.CapsuleGeometry ? new THREE.CapsuleGeometry(0.45, 1.15, 4, 10) : new THREE.CylinderGeometry(0.45, 0.45, 1.9, 10),
+    new THREE.MeshStandardMaterial({ color: 0x15171c, emissive: 0x2a6f9c, emissiveIntensity: 0.4, roughness: 0.5 }));
+  body.position.y = 1;
+  playerMesh.add(body);
+  playerGlow = new THREE.PointLight(0x6fd3e0, 1.6, 9, 2);
+  playerGlow.position.y = 1.3;
+  playerMesh.add(playerGlow);
+  playerMesh.position.copy(state.pos);
+  scene.add(playerMesh);
+}
+
+function buildSpores() {
+  const N = 1400;
+  const geo = new THREE.BufferGeometry();
+  const arr = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    arr[i*3] = (Math.random() - 0.5) * 90;
+    arr[i*3+1] = Math.random() * 9;
+    arr[i*3+2] = (Math.random() - 0.5) * 90;
+  }
+  geo.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+  const mat = new THREE.PointsMaterial({ color: 0x6fd3e0, size: 0.07, transparent: true, opacity: 0.55, depthWrite: false });
+  spores = new THREE.Points(geo, mat);
+  scene.add(spores);
+}
+
+function buildWardenFigure() {
+  // tall, elongated, limbs too long (PRD 8 entities). Hidden until MANIFEST.
+  const g = new THREE.Group();
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 3.4, 6),
+    new THREE.MeshStandardMaterial({ color: 0x05060a, emissive: 0x4a0010, emissiveIntensity: 0.6, roughness: 1 }));
+  torso.position.y = 2.4;
+  g.add(torso);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8),
+    new THREE.MeshStandardMaterial({ color: 0x05060a, emissive: 0x6a0018, emissiveIntensity: 0.8 }));
+  head.position.y = 4.3;
+  g.add(head);
+  for (const s of [-1, 1]) {
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.2, 5),
+      new THREE.MeshStandardMaterial({ color: 0x05060a, emissive: 0x300008 }));
+    arm.position.set(s * 0.5, 2.2, 0);
+    arm.rotation.z = s * 0.25;
+    g.add(arm);
+  }
+  const aura = new THREE.PointLight(0xff1030, 0.0, 12, 2);
+  aura.position.y = 3;
+  g.add(aura);
+  g.userData.aura = aura;
+  g.visible = false;
+  scene.add(g);
+  wardenFigure = g;
+}
+
+/* ============================================================
+   NON-EUCLIDEAN (PRD 7) — seamless teleport portals + reshape.
+   Portals loop space back on itself and stitch distant rooms
+   together ("bigger on the inside"). The Warden also REWRITES
+   corridors while they're out of your view.
+   A true-hyperbolic shader spike lives in hyperbolic-spike.html,
+   modeled on HackerPoet/HyperEngine's hyperboloid math.
+   ============================================================ */
+function buildPortals() {
+  const defs = [
+    { a: new V3(6, 0, -30), ay: 0, b: new V3(0, 0, 17), by: 0, color: 0x8be9ff },                          // Penrose loop: deep north -> back near spawn
+    { a: new V3(-34, 0, 11), ay: Math.PI / 2, b: new V3(34, 0, -2), by: -Math.PI / 2, color: 0xc59bff },   // bigger-on-the-inside: west <-> east
+  ];
+  for (const d of defs) {
+    const pair = { a: { pos: d.a, yaw: d.ay }, b: { pos: d.b, yaw: d.by }, color: d.color };
+    pair.ringA = makePortalRing(d.a, d.ay, d.color);
+    pair.ringB = makePortalRing(d.b, d.by, d.color);
+    portalPairs.push(pair);
+  }
+}
+function makePortalRing(pos, yaw, color) {
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.16, 10, 36),
+    new THREE.MeshStandardMaterial({ color: 0x10242c, emissive: color, emissiveIntensity: 1.4 }));
+  g.add(ring);
+  const veil = new THREE.Mesh(new THREE.CircleGeometry(1.45, 32),
+    new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.14, side: THREE.DoubleSide }));
+  g.add(veil);
+  g.add(new THREE.PointLight(color, 1.3, 11, 2));
+  g.position.copy(pos); g.position.y = 1.7;
+  g.rotation.y = yaw;
+  g.userData = { ring };
+  scene.add(g);
+  return g;
+}
+function updatePortals(dt) {
+  portalCooldown = Math.max(0, portalCooldown - dt);
+  if (portalGuard && state.pos.distanceTo(portalGuard.pos) > 3.0) portalGuard = null;
+  if (portalCooldown > 0) return;
+  for (const pr of portalPairs) {
+    for (const link of [[pr.a, pr.b], [pr.b, pr.a]]) {
+      const enter = link[0], exit = link[1];
+      if (enter === portalGuard) continue;
+      if (state.pos.distanceTo(enter.pos) < 1.9) {
+        const fx = Math.sin(exit.yaw), fz = Math.cos(exit.yaw);
+        state.pos.set(exit.pos.x + fx * 2.6, 0, exit.pos.z + fz * 2.6);
+        state.yaw = exit.yaw;
+        camera.position.set(state.pos.x - fx * 6.2, 4.2, state.pos.z - fz * 6.2); // snap, no sweep
+        portalCooldown = 1.4; portalGuard = exit;
+        document.getElementById("flash").style.opacity = 0.55;  // mask the cut (PRD 7)
+        distortT = 0.5;
+        return;
+      }
+    }
+  }
+}
+function addShifter(ax, az, w, d, bx, bz) {
+  const idx = walls.length;
+  walls.push({ x: ax, z: az, w, d });
+  const h = 9;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color: 0x1a1410, emissive: 0x6a3a08, emissiveIntensity: 0.45, roughness: 0.95 }));
+  m.position.set(ax, h / 2, az);
+  scene.add(m); wallMeshes.push(m);
+  reshapeables.push({ idx, slotA: { x: ax, z: az }, slotB: { x: bx, z: bz }, cur: "A", mesh: m });
+}
+function reshapeRoom() {
+  // RESHAPE_ROOM / SEAL_CORRIDOR (PRD 6.3): rewrite a segment that's out of view.
+  // Each shifter only blocks ONE of several paths, so the player is never sealed in (PRD 6.5).
+  const cand = reshapeables.filter(s => !playerCanSee(new V3(walls[s.idx].x, 1.5, walls[s.idx].z)));
+  if (!cand.length) return false;
+  const s = cand[Math.floor(Math.random() * cand.length)];
+  s.cur = s.cur === "A" ? "B" : "A";
+  const slot = s.cur === "A" ? s.slotA : s.slotB;
+  walls[s.idx].x = slot.x; walls[s.idx].z = slot.z;
+  s.mesh.position.x = slot.x; s.mesh.position.z = slot.z;
+  distortT = 1.0;
+  document.getElementById("flash").style.opacity = 0.35;
+  sysMsg("a corridor just rewrote itself behind you.");
+  return true;
+}
+
+/* ============================================================
+   GEOMETRY HELPERS — collision + line of sight
+   ============================================================ */
+function collide(px, pz, r) {
+  for (const w of walls) {
+    const hx = w.w / 2 + r, hz = w.d / 2 + r;
+    const dx = px - w.x, dz = pz - w.z;
+    if (Math.abs(dx) < hx && Math.abs(dz) < hz) {
+      // push out along least-penetration axis
+      const ox = hx - Math.abs(dx), oz = hz - Math.abs(dz);
+      if (ox < oz) px = w.x + Math.sign(dx) * hx;
+      else pz = w.z + Math.sign(dz) * hz;
+    }
+  }
+  return [px, pz];
+}
+
+// segment (a->b) vs AABB intersection (slab method) — occlusion test
+function segHitsBox(ax, az, bx, bz, w) {
+  const minx = w.x - w.w / 2, maxx = w.x + w.w / 2;
+  const minz = w.z - w.d / 2, maxz = w.z + w.d / 2;
+  let t0 = 0, t1 = 1;
+  const dx = bx - ax, dz = bz - az;
+  for (const [p, q, lo, hi] of [[-dx, ax - minx, minx, maxx], [dx, maxx - ax, minx, maxx], [-dz, az - minz, minz, maxz], [dz, maxz - az, minz, maxz]]) {
+    if (Math.abs(p) < 1e-9) { if (q < 0) return false; }
+    else { const t = q / p; if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; } }
+  }
+  return t0 <= t1;
+}
+
+function hasLineOfSight(from, to) {
+  for (const w of walls) if (segHitsBox(from.x, from.z, to.x, to.z, w)) return false;
+  return true;
+}
+
+// can the player SEE this world position right now? (range + FOV cone + occlusion)
+function playerCanSee(p) {
+  const dx = p.x - state.pos.x, dz = p.z - state.pos.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist > SEE_DIST) return false;
+  const fwdx = Math.sin(state.yaw), fwdz = Math.cos(state.yaw);
+  const dot = (dx / dist) * fwdx + (dz / dist) * fwdz;
+  if (dot < SEE_FOV) return false;
+  return hasLineOfSight(state.pos, p);
+}
+
+/* ============================================================
+   BOT AI  (>>> SPACETIME: replaced by real player position rows)
+   ============================================================ */
+function pickWaypoint() {
+  const pts = [new V3(0,0,-28), new V3(-32,0,5), new V3(32,0,5), new V3(0,0,4), new V3(-6,0,18), new V3(12,0,-18)];
+  return pts[Math.floor(Math.random() * pts.length)].clone();
+}
+
+function updateBots(dt) {
+  for (const b of bots) {
+    const to = new V3().subVectors(b.target, b.pos);
+    to.y = 0;
+    if (to.length() < 1.5) { b.target = pickWaypoint(); }
+    else {
+      to.normalize();
+      let nx = b.pos.x + to.x * 3.4 * dt;
+      let nz = b.pos.z + to.z * 3.4 * dt;
+      [nx, nz] = collide(nx, nz, PLAYER_R);
+      b.pos.set(nx, 0, nz);
+    }
+    b.mesh.position.copy(b.pos);
+    b.mesh.lookAt(b.pos.x + to.x, 1, b.pos.z + to.z);
+    b.visible = playerCanSee(b.pos);
+    // warm glow brightens when near player (readability)
+    b.glow.intensity = 1.0 + (b.visible ? 0.8 : 0);
+
+    // occasional REAL chatter
+    b.lastChat -= dt;
+    if (b.lastChat <= 0) {
+      b.lastChat = 16 + Math.random() * 22;
+      realBotMessage(b);
+    }
+  }
+}
+
+const BOT_LINES = [
+  "anyone got eyes on an anchor?",
+  "this room keeps changing i swear",
+  "i think i hear something near me",
+  "heading deeper, watch the timer",
+  "lost you guys, where'd everyone go",
+  "found a dead end. backtracking.",
+  "stay loud so i know it's really you",
+];
+function realBotMessage(b) {
+  pushChat(b.name, b.colorHex, BOT_LINES[Math.floor(Math.random() * BOT_LINES.length)], b, false);
+}
+
+/* ============================================================
+   CHAT + TRUST  (the heart — PRD 5)
+   ============================================================ */
+const logEl = document.getElementById("log");
+function pushChat(name, color, text, senderBot, forged) {
+  // TRUST RULE: verified iff we can see the claimed sender at arrival (PRD 5.1).
+  // A forged message is only ever sent when the bot is unseen -> always arrives "unknown".
+  const verified = senderBot ? playerCanSee(senderBot.pos) : false;
+  const el = document.createElement("div");
+  el.className = "msg";
+  const badge = verified
+    ? `<span class="verified">✓ IN SIGHT</span>`
+    : `<span class="unknown">? UNVERIFIED</span>`;
+  el.innerHTML = `<span class="name" style="color:${color}">${name}</span>${badge}<br>${escapeHtml(text)}`;
+  if (verified) {
+    el.style.borderLeftColor = color;
+    el.style.boxShadow = `0 0 14px ${color}55, inset 0 0 0 1px ${color}33`;
+  }
+  // forged flag is SERVER-ONLY in the real build (subscription filtering) — client cannot see it.
+  // We keep it here only to score the ending honestly; it never affects rendering.
+  el._forged = !!forged;
+  logEl.appendChild(el);
+  while (logEl.children.length > 7) logEl.removeChild(logEl.firstChild);
+}
+function sysMsg(text) {
+  const el = document.createElement("div");
+  el.className = "msg sys";
+  el.textContent = text;
+  logEl.appendChild(el);
+  while (logEl.children.length > 7) logEl.removeChild(logEl.firstChild);
+}
+function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c])); }
+
+/* ============================================================
+   THE WARDEN  (PRD 6) — local, rule-based, energy + phases.
+   >>> LLM: in the real build a privileged Node client reads state, asks the
+   LLM for ONE action + (for MIMIC) few-shot forged text from the victim's
+   real messages, then applies it via SpacetimeDB reducers.
+   ============================================================ */
+const warden = { energy: 3, tick: 7, manifestCd: 0 };
+
+// few-shot-flavored lure templates, keyed to the victim's "voice"
+function forgeLureText(victim) {
+  const lures = [
+    "found one!! come to me quick before it moves",
+    "got an anchor, i'm by the east wall — hurry",
+    "exit's open over here i think, come now",
+    "i'm safe, stop looking and come to my room",
+    "drop what you're doing, i need you over here",
+  ];
+  return lures[Math.floor(Math.random() * lures.length)];
+}
+
+function wardenStep(dt) {
+  // escalation by time (PRD 6.4)
+  const elapsed = MATCH_SECONDS - state.timeLeft;
+  const newPhase = state.placed >= 2 || elapsed > 420 ? 3 : elapsed > 200 ? 2 : 1;
+  if (newPhase !== state.phase) { state.phase = newPhase; announcePhase(); }
+
+  // energy regen scales with phase
+  warden.energy = Math.min(8, warden.energy + dt * (0.18 + state.phase * 0.12));
+  warden.manifestCd = Math.max(0, warden.manifestCd - dt);
+
+  warden.tick -= dt;
+  if (warden.tick > 0) return;
+  warden.tick = 11 + Math.random() * 4;   // 10-15s decision loop (PRD 6.2)
+
+  // choose ONE action affordable now, weighted by phase
+  const choices = [];
+  const hidden = bots.filter(b => !playerCanSee(b.pos));
+  if (hidden.length && warden.energy >= 1) choices.push({ a: "MIMIC", cost: 1, w: 3 });
+  if (warden.energy >= 1) choices.push({ a: "DISTORT", cost: 1, w: state.phase });
+  if (state.phase >= 2 && warden.energy >= 3) choices.push({ a: "RESHAPE", cost: 3, w: state.phase });
+  if (state.phase >= 3 && warden.energy >= 4 && warden.manifestCd <= 0) choices.push({ a: "MANIFEST", cost: 4, w: 4 });
+  if (!choices.length) return;
+
+  // weighted pick
+  let total = choices.reduce((s, c) => s + c.w, 0), r = Math.random() * total, pick = choices[0];
+  for (const c of choices) { r -= c.w; if (r <= 0) { pick = c; break; } }
+  warden.energy -= pick.cost;
+
+  if (pick.a === "MIMIC") {
+    const victim = hidden[Math.floor(Math.random() * hidden.length)];
+    // forged row stamped with victim identity/name/color (PRD 5.2)
+    pushChat(victim.name, victim.colorHex, forgeLureText(victim), victim, true);
+  } else if (pick.a === "DISTORT") {
+    distortPulse();
+  } else if (pick.a === "RESHAPE") {
+    if (!reshapeRoom()) warden.energy += pick.cost;  // refund if nothing was out of view
+  } else if (pick.a === "MANIFEST") {
+    manifest();
+    warden.manifestCd = 30;  // hard cooldown (PRD 6.5 fairness)
+  }
+}
+
+function announcePhase() {
+  const t = { 1: "phase 1 — it is watching", 2: "phase 2 — it is separating you", 3: "phase 3 — the world comes apart" };
+  document.getElementById("phase").textContent = t[state.phase];
+  if (state.phase === 2) sysMsg("the corridors feel longer than they were.");
+  if (state.phase === 3) { sysMsg("something vast just turned its attention toward you."); document.getElementById("danger").style.opacity = 0.5; }
+}
+
+let distortT = 0, glitchT = 0;
+function distortPulse() { distortT = 1.2; document.getElementById("glitch").style.opacity = 0.6; }
+function manifest() {
+  // place the entity a bit in front-ish of the player and let it stutter-stand
+  const ang = state.yaw + (Math.random() - 0.5) * 1.4;
+  wardenFigure.position.set(state.pos.x + Math.sin(ang) * 9, 0, state.pos.z + Math.cos(ang) * 9);
+  wardenFigure.visible = true;
+  wardenFigure.userData.life = 9;
+  wardenFigure.userData.aura.intensity = 2.2;
+  document.getElementById("danger").style.opacity = 0.7;
+  sysMsg("IT IS HERE. do not let it corner you.");
+}
+
+function updateWardenFigure(dt) {
+  if (!wardenFigure.visible) return;
+  const u = wardenFigure.userData;
+  u.life -= dt;
+  // stutter-frame creep toward player
+  if (Math.random() < 0.4) {
+    const to = new V3().subVectors(state.pos, wardenFigure.position); to.y = 0; to.normalize();
+    let nx = wardenFigure.position.x + to.x * 2.0 * dt * 30 * dt;
+    let nz = wardenFigure.position.z + to.z * 2.0 * dt * 30 * dt;
+    [nx, nz] = collide(nx, nz, 0.5);
+    wardenFigure.position.set(nx, 0, nz);
+  }
+  wardenFigure.lookAt(state.pos.x, 3, state.pos.z);
+  wardenFigure.rotation.y += Math.sin(performance.now() * 0.03) * 0.04;
+
+  const d = wardenFigure.position.distanceTo(state.pos);
+  document.getElementById("danger").style.opacity = Math.max(0.2, Math.min(0.85, (14 - d) / 14));
+  if (d < ABSORB_DIST) { absorb(); }
+  if (u.life <= 0) { wardenFigure.visible = false; u.aura.intensity = 0; if (state.phase < 3) document.getElementById("danger").style.opacity = 0; }
+}
+
+function absorb() {
+  // PRD 5.4: traps, doesn't insta-kill. Here, manifest contact = loss for the slice.
+  endGame(false, "The Warden pulled you into the void. Your friends will hear your voice next — but it will not be you speaking.");
+}
+
+/* ============================================================
+   ANCHORS — pickup / carry / place
+   ============================================================ */
+const interactEl = document.getElementById("interact");
+let canInteract = null, interactKind = null;
+
+function updateAnchors(dt) {
+  canInteract = null; interactKind = null;
+
+  // carried anchor floats beside player
+  if (state.carrying) {
+    const a = state.carrying;
+    a.mesh.position.set(state.pos.x - Math.sin(state.yaw) * 1.1, 1.6, state.pos.z - Math.cos(state.yaw) * 1.1);
+    a.mesh.userData.core.rotation.y += dt * 2;
+    // placement prompt at convergence
+    if (state.pos.distanceTo(new V3(0, 0, 4)) < PLACE_DIST) { canInteract = a; interactKind = "place"; interactEl.textContent = "[ E ] place anchor at convergence"; }
+  } else {
+    // nearest pickup
+    for (const a of anchors) {
+      if (a.placed || a.carriedBy) continue;
+      if (state.pos.distanceTo(a.pos) < PICKUP_DIST) { canInteract = a; interactKind = "pickup"; interactEl.textContent = "[ E ] pick up anchor"; break; }
+    }
+  }
+  interactEl.style.opacity = canInteract ? 1 : 0;
+
+  // idle anchors bob + spin
+  for (const a of anchors) {
+    if (a.placed || a === state.carrying) continue;
+    a.mesh.userData.core.rotation.y += dt * 1.4;
+    a.mesh.position.y = 0.9 + Math.sin(performance.now() * 0.002 + a.pos.x) * 0.15;
+  }
+}
+
+let interactLatch = false;
+function handleInteract() {
+  if (!keys["KeyE"]) { interactLatch = false; return; }
+  if (interactLatch || !canInteract) return;
+  interactLatch = true;
+  if (interactKind === "pickup") {
+    state.carrying = canInteract;
+    canInteract.carriedBy = "player";
+    sysMsg(`anchor secured. you move slower now — and the Warden knows you have it.`);
+  } else if (interactKind === "place") {
+    const a = state.carrying;
+    a.placed = true; a.carriedBy = null; state.carrying = null;
+    a.mesh.position.set(Math.cos(state.placed) * 2.2, 0.6, 4 + Math.sin(state.placed) * 1.2);
+    state.placed++;
+    document.getElementById("anchorN").textContent = state.placed;
+    convergence.material.emissiveIntensity = 1.2 + state.placed * 0.6;
+    sysMsg(`anchor ${state.placed} of 3 locked into the convergence.`);
+    if (state.placed >= 3) openExit();
+  }
+}
+
+function openExit() {
+  sysMsg("the convergence blazes. the threshold is OPEN. step through it.");
+  document.getElementById("topsub").textContent = "the threshold is open — escape now";
+  let o = 0;
+  const fade = setInterval(() => { o += 0.05; exitGate.material.opacity = Math.min(0.85, o); if (o >= 0.85) clearInterval(fade); }, 40);
+  state.exitOpen = true;
+}
+
+/* ============================================================
+   PLAYER MOVEMENT + CAMERA
+   ============================================================ */
+function updatePlayer(dt) {
+  // turn
+  if (keys["ArrowLeft"] || keys["KeyJ"]) state.yaw += 2.2 * dt;
+  if (keys["ArrowRight"] || keys["KeyL"]) state.yaw -= 2.2 * dt;
+
+  const fwd = new V3(Math.sin(state.yaw), 0, Math.cos(state.yaw));
+  const right = new V3(Math.cos(state.yaw), 0, -Math.sin(state.yaw));
+  const move = new V3();
+  if (keys["KeyW"] || keys["ArrowUp"]) move.add(fwd);
+  if (keys["KeyS"] || keys["ArrowDown"]) move.sub(fwd);
+  if (keys["KeyD"]) move.add(right);
+  if (keys["KeyA"]) move.sub(right);
+
+  let speed = PLAYER_SPEED * (state.carrying ? CARRY_SLOW : 1);
+  if (move.lengthSq() > 0) {
+    move.normalize();
+    let nx = state.pos.x + move.x * speed * dt;
+    let nz = state.pos.z + move.z * speed * dt;
+    [nx, nz] = collide(nx, nz, PLAYER_R);
+    state.pos.set(nx, 0, nz);
+  }
+  playerMesh.position.copy(state.pos);
+  playerMesh.rotation.y = Math.atan2(fwd.x, fwd.z);
+
+  // third-person follow cam, tight FOV, slight bob (PRD 9 third-person recommendation)
+  const camDist = 6.2, camHeight = 4.2;
+  const desired = new V3(
+    state.pos.x - fwd.x * camDist,
+    camHeight,
+    state.pos.z - fwd.z * camDist
+  );
+  camera.position.lerp(desired, 1 - Math.pow(0.0009, dt));
+  camera.lookAt(state.pos.x + fwd.x * 2, 1.4, state.pos.z + fwd.z * 2);
+
+  // win check: reach the open threshold
+  if (state.exitOpen && state.pos.distanceTo(new V3(0, 0, 4)) < 2.4) {
+    endGame(true, "You crossed back. All three anchors held. Whatever wore your friends' voices is still down there — but you are out, together.");
+  }
+}
+
+/* ============================================================
+   ROSTER + ATMOSPHERE
+   ============================================================ */
+function updateRoster() {
+  const el = document.getElementById("roster");
+  let html = `<div style="color:#6a8088;margin-bottom:4px;letter-spacing:2px;">SURVIVORS</div>`;
+  html += `<div class="who"><span><span class="dot" style="background:#6fd3e0"></span>You</span><span class="seen">self</span></div>`;
+  for (const b of bots) {
+    const cls = b.visible ? "seen" : "unseen";
+    const tag = b.visible ? "in sight" : "unverified";
+    html += `<div class="who"><span><span class="dot" style="background:${b.colorHex}"></span>${b.name}</span><span class="${cls}">${tag}</span></div>`;
+  }
+  el.innerHTML = html;
+}
+
+let lightningT = 0, nextBolt = 4;
+function updateAtmosphere(dt) {
+  const now = performance.now() * 0.001;
+
+  // spores drift UP (gravity is wrong here, PRD 3)
+  const pos = spores.geometry.attributes.position.array;
+  for (let i = 1; i < pos.length; i += 3) { pos[i] += dt * 0.5; if (pos[i] > 9) pos[i] = 0; }
+  spores.geometry.attributes.position.needsUpdate = true;
+
+  // tendril breathing
+  for (const t of tendrils) t.rotation.z = t.userData.baseRot + Math.sin(now * 1.2 + t.userData.phase) * 0.15;
+
+  // unstable flicker lights
+  for (const pl of flickerLights) {
+    if (pl.userData.dead) { pl.intensity = 0; continue; }
+    pl.intensity = pl.userData.base * (0.6 + Math.abs(Math.sin(now * 6 + pl.userData.phase)) * 0.7);
+    if (Math.random() < 0.0006) pl.userData.dead = true; // a light dies
+  }
+  convergence.rotation.z += dt * 0.3;
+
+  // portal shimmer (non-Euclidean doorways)
+  for (const pr of portalPairs) {
+    const e = 1.1 + Math.sin(now * 2.4) * 0.5;
+    pr.ringA.userData.ring.material.emissiveIntensity = e;
+    pr.ringB.userData.ring.material.emissiveIntensity = e;
+    pr.ringA.userData.ring.rotation.z += dt * 0.7;
+    pr.ringB.userData.ring.rotation.z -= dt * 0.7;
+  }
+
+  // dry lightning (PRD 3 atmosphere)
+  nextBolt -= dt;
+  if (nextBolt <= 0) { nextBolt = 5 + Math.random() * 8; lightningT = 0.28; }
+  if (lightningT > 0) {
+    lightningT -= dt;
+    const f = Math.max(0, lightningT / 0.28) * (Math.random() > 0.4 ? 1 : 0.3);
+    document.getElementById("flash").style.opacity = f * 0.5;
+    scene.userData.hemi.intensity = 0.5 + f * 2.2;
+  } else { document.getElementById("flash").style.opacity = 0; scene.userData.hemi.intensity = 0.5; }
+
+  // distort decay
+  if (distortT > 0) {
+    distortT -= dt;
+    const shake = distortT * 0.12;
+    camera.position.x += (Math.random() - 0.5) * shake;
+    camera.position.y += (Math.random() - 0.5) * shake;
+    if (distortT <= 0) document.getElementById("glitch").style.opacity = 0;
+  }
+
+  // vignette tightens with danger/phase
+  const vig = document.getElementById("vignette");
+  vig.style.boxShadow = `inset 0 0 ${240 - state.phase * 30}px ${60 + state.phase * 20}px rgba(0,0,0,0.92)`;
+}
+
+/* ============================================================
+   TIMER + GAME FLOW
+   ============================================================ */
+function updateTimer(dt) {
+  state.timeLeft -= dt;
+  if (state.timeLeft <= 0) { state.timeLeft = 0; endGame(false, "Time ran out. The Upside Down keeps what it catches."); }
+  const m = Math.floor(state.timeLeft / 60), s = Math.floor(state.timeLeft % 60);
+  document.getElementById("time").textContent = `${m}:${s.toString().padStart(2, "0")}`;
+  if (state.timeLeft < 60) document.getElementById("time").style.color = "#ff7a8a";
+}
+
+function endGame(won, msg) {
+  if (gameOver) return;
+  gameOver = true; running = false;
+  const end = document.getElementById("end");
+  const screen = end;
+  screen.className = "screen " + (won ? "win" : "lose");
+  document.getElementById("endTitle").textContent = won ? "ESCAPED" : "ABSORBED";
+  document.getElementById("endMsg").innerHTML = msg;
+  end.classList.remove("hidden");
+}
+
+function onResize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+
+/* ============================================================
+   MAIN LOOP
+   ============================================================ */
+function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.05, clock.getDelta());
+  if (running && !gameOver) {
+    updatePlayer(dt);
+    updatePortals(dt);
+    updateBots(dt);
+    updateAnchors(dt);
+    handleInteract();
+    wardenStep(dt);
+    updateWardenFigure(dt);
+    updateTimer(dt);
+    updateRoster();
+  }
+  if (scene) updateAtmosphere(dt);
+  if (renderer) renderer.render(scene, camera);
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+function startGame() {
+  document.getElementById("start").classList.add("hidden");
+  running = true;
+  clock = clock || new THREE.Clock();
+  clock.start();
+  state.timeLeft = MATCH_SECONDS;
+  sysMsg("you and Mara and Cass fall into the dark. find the anchors. trust your eyes.");
+  setTimeout(() => sysMsg("remember: a message only glows if you can SEE who sent it."), 4500);
+}
+
+window.addEventListener("load", () => {
+  buildWorld();
+  clock = new THREE.Clock();
+  loop();
+  document.getElementById("startBtn").addEventListener("click", startGame);
+  document.getElementById("againBtn").addEventListener("click", () => location.reload());
+});
+</script>
+</body>
+</html>
