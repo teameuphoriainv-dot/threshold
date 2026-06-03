@@ -426,6 +426,7 @@ function buildBots() {
     bots.push({
       id: "bot" + i, name: d.name, color: d.color, colorHex: "#" + d.color.toString(16).padStart(6, "0"),
       mesh: g, glow, pos: d.start.clone(), target: pickWaypoint(), visible: false, lastChat: 4 + i * 3,
+      mimicCd: 0,   // PRD 6.5: per-victim cooldown so chat never becomes 100% forged noise
     });
   });
 }
@@ -783,6 +784,7 @@ function wardenStep(dt) {
   // energy regen scales with phase
   warden.energy = Math.min(8, warden.energy + dt * (0.18 + state.phase * 0.12));
   warden.manifestCd = Math.max(0, warden.manifestCd - dt);
+  for (const b of bots) b.mimicCd = Math.max(0, b.mimicCd - dt);   // PRD 6.5 mimicry cap
 
   warden.tick -= dt;
   if (warden.tick > 0) return;
@@ -790,7 +792,8 @@ function wardenStep(dt) {
 
   // choose ONE action affordable now, weighted by phase
   const choices = [];
-  const hidden = bots.filter(b => !playerCanSee(b.pos));
+  // PRD 6.5: only mimic an UNSEEN victim who is off cooldown — keeps signal > noise.
+  const hidden = bots.filter(b => !playerCanSee(b.pos) && b.mimicCd <= 0);
   if (hidden.length && warden.energy >= 1) choices.push({ a: "MIMIC", cost: 1, w: 3 });
   if (warden.energy >= 1) choices.push({ a: "DISTORT", cost: 1, w: state.phase });
   if (state.phase >= 2 && warden.energy >= 3) choices.push({ a: "RESHAPE", cost: 3, w: state.phase });
@@ -804,6 +807,7 @@ function wardenStep(dt) {
 
   if (pick.a === "MIMIC") {
     const victim = hidden[Math.floor(Math.random() * hidden.length)];
+    victim.mimicCd = 26 + Math.random() * 10;   // PRD 6.5: this voice is "spent" for a while
     // forged row stamped with victim identity/name/color (PRD 5.2)
     pushChat(victim.name, victim.colorHex, forgeLureText(victim), victim, true);
   } else if (pick.a === "DISTORT") {

@@ -70,9 +70,9 @@ Everything else is polish on top of a spine that doesn't exist yet. Build the sp
 - **PRD §4.3:** "some convergence steps require 2+ players acting simultaneously in different rooms."
 - **Evidence:** none exist. This is the mechanic that *forces* splitting → makes mimicry bite. Without it, optimal play is "never split," which defeats the whole design.
 
-### 1.6 Mimicry frequency not capped
-- **Evidence:** `wardenStep()` (`:777`) gates only on the global 10–15s tick + energy; no per-victim cooldown.
-- **PRD §6.5:** "mimicry frequency capped so chat doesn't become 100% noise." Add a per-victim cooldown so signal > noise.
+### 1.6 Mimicry frequency not capped — ✅ DONE
+- **Was:** `wardenStep()` gated only on the global 10–15s tick + energy; no per-victim cooldown.
+- **Fix shipped:** per-victim `mimicCd` (`buildBots`), decremented each tick, gates MIMIC candidates to unseen + off-cooldown victims, stamped 26–36s on fire. PRD §6.5 satisfied. Boot-test green.
 
 ---
 
@@ -85,7 +85,7 @@ Current visuals = emissive materials + CSS overlays. Gaps:
 - **2.3 No volumetric light shafts / god rays** (§8) — only point lights (`:351`).
 - **2.4 Warden model is primitive.** `buildWardenFigure()` (`:520`) = cylinders + a sphere. PRD §8: elongated humanoid, IK-broken limbs, stutter-frame movement, **trailing shadow-particle tendrils**. No particles, no IK.
 - **2.5 Thin environment.** Single spore system (`:505`); no wet world / SSR / puddles, no multi-depth fog (just one `FogExp2` `:240`), no ember/ash variety.
-- **2.6 Palette drift from the LOCKED theme.** PRD §3 locks **deep blue-black / cold grey / desaturated teal** as the base, with **crimson reserved for Warden actions only**. Current code defaults tendrils and half the point lights to crimson (`:295` `emissive:0xb31226`, `:354`), and the whole UI is crimson. Either correct to the locked palette or get an explicit team override — right now we're off-theme by default.
+- **2.6 Palette: crimson is a deliberate team override (RESOLVED — keep crimson).** PRD §3 locks blue/teal base with crimson Warden-only, but the team intentionally rebuilt crimson-everywhere (`(was blue)` comments at `:295,354,414,421,440`; README "crimson Upside-Down aesthetic"). Team decision at audit time: **keep crimson**. No change. If the visual bar ever needs the cold-blue contrast for the Warden's danger pulses to *read*, revisit then.
 - **2.7 Audio: zero.** PRD §8: dread drone that builds, spatial footsteps from impossible directions, layered Warden whispers, lightning synced to flashes. Nothing implemented. High dread-ROI, low risk. *(Owner: Mounish — assets/audio lane, §12.)*
 
 ---
@@ -101,8 +101,8 @@ Current visuals = emissive materials + CSS overlays. Gaps:
 
 ## Quick wins (cheap, high-ROI, do regardless of the migration)
 
-1. **Palette correction** to the locked blue/teal base (2.6) — minutes, big atmosphere fix.
-2. **Per-victim mimic cooldown** (1.6) — ~5 lines in `wardenStep`.
+1. ~~Palette correction~~ — **resolved: keep crimson** (deliberate team override, 2.6).
+2. ~~Per-victim mimic cooldown (1.6)~~ — ✅ **shipped.**
 3. **One fake anchor + placed-fake loss** (1.2 / 1.4) — proves the lure mechanic end-to-end.
 4. **Audio drone + lightning SFX** (2.7) — instant dread lift, Mounish's lane.
 5. **Mouse-look pointer-lock** (3.3) — transforms game feel.
