@@ -167,6 +167,13 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <!-- GLTFLoader: plain global IIFE (attaches THREE.GLTFLoader), r128-pinned. Must load AFTER three.min.js. -->
 <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
+<!-- Post-processing (r128 examples/js global-IIFE). MUST load AFTER three.min.js, shaders first then composer/passes. -->
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script>
 "use strict";
 /* ============================================================
@@ -207,6 +214,138 @@ let bots = [];         // {id,name,color,mesh,glow,pos,target,visible}
 let playerMesh, playerGlow, convergence, exitGate, wardenFigure;
 let spores, tendrils = [];
 const flickerLights = [];
+
+/* ============================================================
+   POST-PROCESSING (PRD 8) — real EffectComposer pipeline.
+   GUARD PATTERN: only builds if the post-FX libs loaded. In the
+   headless boot-test the stub has none, so `composer` stays null
+   and loop() falls back to renderer.render().
+   ============================================================ */
+let composer = null, bloomPass = null, chromaPass = null, aberration = 0;
+const ChromaticAberrationShader = {
+  uniforms: { tDiffuse: { value: null }, uAmount: { value: 0.0 }, uResolution: { value: null }, uTime: { value: 0.0 } },
+  vertexShader: [
+    "varying vec2 vUv;",
+    "void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }"
+  ].join("\n"),
+  fragmentShader: [
+    "uniform sampler2D tDiffuse;",
+    "uniform float uAmount;",
+    "uniform vec2  uResolution;",
+    "uniform float uTime;",
+    "varying vec2 vUv;",
+    "void main(){",
+    "  vec2 uv = vUv;",
+    "  vec2 dir = uv - 0.5;",
+    "  float r2 = dot(dir, dir);",
+    "  float warp = 1.0 + uAmount * (0.18 * r2) * (0.85 + 0.15 * sin(uTime * 7.0));",
+    "  vec2 wuv = 0.5 + dir * warp;",
+    "  float amt = uAmount * (0.0035 + 0.012 * r2);",
+    "  vec2 off = dir * amt;",
+    "  float rC = texture2D(tDiffuse, wuv + off).r;",
+    "  float gC = texture2D(tDiffuse, wuv).g;",
+    "  float bC = texture2D(tDiffuse, wuv - off).b;",
+    "  vec3 col = vec3(rC, gC, bC);",
+    "  col *= 1.0 - uAmount * 0.06 * step(0.5, fract((uv.y * uResolution.y) * 0.5 + uTime));",
+    "  gl_FragColor = vec4(col, 1.0);",
+    "}"
+  ].join("\n")
+};
+function setupPostFX() {
+  // Guard includes shaders so a partial CDN load degrades gracefully (not just constructors).
+  if (typeof THREE === "undefined" ||
+      !THREE.EffectComposer || !THREE.RenderPass || !THREE.ShaderPass ||
+      !THREE.UnrealBloomPass || !THREE.CopyShader || !THREE.LuminosityHighPassShader) {
+    composer = null; return;
+  }
+  composer = new THREE.EffectComposer(renderer);
+  composer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  composer.setSize(innerWidth, innerHeight);
+  composer.addPass(new THREE.RenderPass(scene, camera));
+  bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.85, 0.55, 0.55);
+  composer.addPass(bloomPass);
+  chromaPass = new THREE.ShaderPass(ChromaticAberrationShader);
+  chromaPass.uniforms.uResolution.value = new THREE.Vector2(innerWidth, innerHeight);
+  chromaPass.renderToScreen = true;
+  composer.addPass(chromaPass);
+}
+function wardenAberration() {
+  let prox = 0;
+  if (wardenFigure && wardenFigure.visible) {
+    const d = wardenFigure.position.distanceTo(state.pos);
+    prox = Math.max(0, Math.min(1, (16 - d) / 16)); prox *= prox;
+  }
+  const ambient = Math.min(0.35, trauma * 0.5 + (distortT > 0 ? 0.25 : 0));
+  const phaseFloor = (state.phase - 1) * 0.05;
+  return Math.min(1, Math.max(prox, ambient + phaseFloor));
+}
+function updatePostFX(dt) {
+  if (!composer) return;
+  const target = wardenAberration();
+  const k = target > aberration ? 10 : 3;
+  aberration += (target - aberration) * Math.min(1, k * dt);
+  if (chromaPass) { chromaPass.uniforms.uAmount.value = aberration; chromaPass.uniforms.uTime.value = performance.now() * 0.001; }
+  if (bloomPass) bloomPass.strength = 0.85 + aberration * 0.9;
+}
+
+/* ============================================================
+   FLESHY SSS VINE MATERIAL (PRD 3/8) — cheap subsurface-scattering look +
+   real vertex undulation. Guarded: ShaderMaterial is absent in the boot-test
+   stub, so VINE_SSS_OK is false there and we return the original vine material.
+   ============================================================ */
+const VINE_SSS_OK = (typeof THREE.ShaderMaterial === "function");
+const vineMaterials = [];
+const VINE_DEEP = new THREE.Color(0x2a0a12), VINE_GLOW = new THREE.Color(0xb31226), VINE_RIM = new THREE.Color(0xff3a52);
+const VINE_VERT = `
+  precision mediump float;
+  uniform float uTime; uniform float uPhase;
+  varying vec3 vWorldNormal; varying vec3 vViewDir; varying float vThickness;
+  void main() {
+    float yN = (position.y + 1.0) * 0.5;
+    vThickness = clamp(1.0 - yN, 0.0, 1.0);
+    float wave = sin(uTime * 0.9 + uPhase + position.y * 1.6);
+    float sway = wave * 0.10 * yN;
+    vec3 displaced = position;
+    displaced.x += sway;
+    displaced.z += cos(uTime * 0.7 + uPhase + position.y * 1.3) * 0.06 * yN;
+    displaced.xz *= 1.0 + wave * 0.04;
+    vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    vViewDir = normalize(cameraPosition - worldPos.xyz);
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
+  }
+`;
+const VINE_FRAG = `
+  precision mediump float;
+  uniform float uTime; uniform vec3 uDeep; uniform vec3 uGlow; uniform vec3 uRim; uniform float uIntensity;
+  varying vec3 vWorldNormal; varying vec3 vViewDir; varying float vThickness;
+  void main() {
+    vec3 N = normalize(vWorldNormal); vec3 V = normalize(vViewDir);
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+    float wrap = pow(max(dot(N, V), 0.0), 0.5);
+    float sss = (vThickness * 0.65 + 0.35) * wrap;
+    float pulse = 0.85 + 0.15 * sin(uTime * 1.3 + vThickness * 4.0);
+    vec3 col = uDeep;
+    col += uGlow * sss * pulse * uIntensity;
+    col += uRim * fres * 1.2;
+    col = col / (col + vec3(0.55));
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+function makeVineMaterial() {
+  if (!VINE_SSS_OK) {
+    return new THREE.MeshStandardMaterial({ color: 0x2a0a12, emissive: 0xb31226, emissiveIntensity: 0.7, roughness: 1 });
+  }
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 }, uPhase: { value: Math.random() * Math.PI * 2 },
+      uDeep: { value: VINE_DEEP }, uGlow: { value: VINE_GLOW }, uRim: { value: VINE_RIM }, uIntensity: { value: 1.0 },
+    },
+    vertexShader: VINE_VERT, fragmentShader: VINE_FRAG,
+  });
+  vineMaterials.push(mat);
+  return mat;
+}
 
 // --- non-Euclidean state (PRD 7) ---
 let portalPairs = [];     // seamless teleport doorways: loops + "bigger on the inside"
@@ -283,6 +422,7 @@ function buildWorld() {
   buildPlayer();
   buildSpores();
   buildWardenFigure();
+  setupPostFX();   // build EffectComposer if the post-FX CDN libs loaded; else stays null (boot-test path)
 
   addEventListener("resize", onResize);
 }
@@ -303,8 +443,8 @@ function addWall(x, z, w, d) {
 function decorateWall(x, z, w, d) {
   const count = Math.max(2, Math.floor((w + d) * 0.5));
   for (let i = 0; i < count; i++) {
-    const g = new THREE.CylinderGeometry(0.06, 0.13, 2 + Math.random() * 3, 5);
-    const teal = new THREE.MeshStandardMaterial({ color: 0x2a0a12, emissive: 0xb31226, emissiveIntensity: 0.7, roughness: 1 });
+    const g = new THREE.CylinderGeometry(0.06, 0.13, 2 + Math.random() * 3, 8);
+    const teal = makeVineMaterial();
     const t = new THREE.Mesh(g, teal);
     const onX = Math.random() > 0.5;
     t.position.set(
@@ -549,20 +689,73 @@ function buildWardenFigure() {
     new THREE.MeshStandardMaterial({ color: 0x05060a, emissive: 0x6a0018, emissiveIntensity: 0.8 }));
   head.position.y = 4.3;
   g.add(head);
+  const arms = [];
   for (const s of [-1, 1]) {
     const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.2, 5),
       new THREE.MeshStandardMaterial({ color: 0x05060a, emissive: 0x300008 }));
     arm.position.set(s * 0.5, 2.2, 0);
     arm.rotation.z = s * 0.25;
+    arm.userData.rest = { x: 0, y: 0, z: s * 0.25, px: s * 0.5 };   // IK rest pose to jitter around
+    arms.push(arm);
     g.add(arm);
   }
   const aura = new THREE.PointLight(0xff1030, 0.0, 12, 2);
   aura.position.y = 3;
   g.add(aura);
   g.userData.aura = aura;
+  g.userData.arms = arms;
+  g.userData.torso = torso;
+  g.userData.head = head;
+  // trailing shadow-particle tendrils streaming off the elongated humanoid (PRD 8)
+  g.userData.tendrils = buildWardenTendrils(g);
   g.visible = false;
   scene.add(g);
   wardenFigure = g;
+}
+
+function buildWardenTendrils(group) {
+  const N = 260;
+  const positions = new Float32Array(N * 3);   // LOCAL space (relative to warden group)
+  const seeds = new Float32Array(N * 4);        // per-particle: [life, maxLife, driftX, driftZ]
+  for (let i = 0; i < N; i++) respawnTendril(positions, seeds, i, true);
+  const geo = new THREE.BufferGeometry();
+  const posAttr = new THREE.BufferAttribute(positions, 3);
+  geo.setAttribute("position", posAttr);
+  const mat = new THREE.PointsMaterial({ color: 0x6e0512, size: 0.16, transparent: true, opacity: 0.55, depthWrite: false });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  group.add(pts);
+  return { points: pts, positions, seeds, posAttr, mat, count: N };
+}
+function respawnTendril(positions, seeds, i, randomizeLife) {
+  const a = i * 3, s = i * 4;
+  const ang = Math.random() * Math.PI * 2;
+  const r = 0.15 + Math.random() * 0.35;
+  positions[a] = Math.cos(ang) * r;
+  positions[a + 1] = 0.6 + Math.random() * 3.9;
+  positions[a + 2] = Math.sin(ang) * r;
+  const maxLife = 0.7 + Math.random() * 1.1;
+  seeds[s] = randomizeLife ? Math.random() * maxLife : maxLife;
+  seeds[s + 1] = maxLife;
+  seeds[s + 2] = (Math.random() - 0.5) * 0.6;
+  seeds[s + 3] = (Math.random() - 0.5) * 0.6;
+}
+function updateWardenTendrils(dt) {
+  const t = wardenFigure.userData.tendrils;
+  if (!t) return;
+  const { positions, seeds, posAttr, mat, count } = t;
+  let alive = 0;
+  for (let i = 0; i < count; i++) {
+    const a = i * 3, s = i * 4;
+    seeds[s] -= dt;
+    if (seeds[s] <= 0) { respawnTendril(positions, seeds, i, false); continue; }
+    positions[a] += seeds[s + 2] * dt;
+    positions[a + 1] -= (0.5 + (seeds[s + 1] - seeds[s]) * 0.3) * dt;
+    positions[a + 2] += seeds[s + 3] * dt;
+    alive += seeds[s] / seeds[s + 1];
+  }
+  posAttr.needsUpdate = true;
+  mat.opacity = 0.18 + 0.4 * (alive / count);
 }
 
 /* ============================================================
@@ -991,16 +1184,41 @@ function updateWardenFigure(dt) {
   if (!wardenFigure.visible) return;
   const u = wardenFigure.userData;
   u.life -= dt;
-  // stutter-frame creep toward player
-  if (Math.random() < 0.4) {
+
+  // --- PRD 8: HARSH STUTTER-FRAME locomotion ---
+  // Hold dead-still for a few frames, then TELEPORT-STEP a discrete lunge.
+  u.stepCd = (u.stepCd || 0) - dt;
+  if (u.stepCd <= 0) {
+    u.stepCd = 0.10 + Math.random() * 0.22;
     const to = new V3().subVectors(state.pos, wardenFigure.position); to.y = 0; to.normalize();
-    let nx = wardenFigure.position.x + to.x * 2.0 * dt * 30 * dt;
-    let nz = wardenFigure.position.z + to.z * 2.0 * dt * 30 * dt;
+    const lunge = 0.55 + Math.random() * 0.85;
+    const skew = (Math.random() - 0.5) * 0.9;
+    let nx = wardenFigure.position.x + (to.x + to.z * skew) * lunge;
+    let nz = wardenFigure.position.z + (to.z - to.x * skew) * lunge;
     [nx, nz] = collide(nx, nz, 0.5);
     wardenFigure.position.set(nx, 0, nz);
+    u.snap = 1;
+  } else {
+    u.snap = (u.snap || 0) * 0.7;
   }
-  wardenFigure.lookAt(state.pos.x, 3, state.pos.z);
-  wardenFigure.rotation.y += Math.sin(performance.now() * 0.03) * 0.04;
+
+  // --- IK pushed past natural limits: arms jitter, wrench hard on teleport-frames ---
+  const arms = u.arms || [];
+  for (let k = 0; k < arms.length; k++) {
+    const arm = arms[k], rest = arm.userData.rest, sgn = k === 0 ? -1 : 1;
+    const jab = u.snap > 0.5 ? 1 : 0;
+    arm.rotation.x = rest.x + (Math.random() - 0.5) * (1.6 + jab * 2.4);
+    arm.rotation.z = rest.z + (Math.random() - 0.5) * (1.2 + jab * 1.8);
+    arm.position.x = rest.px + (Math.random() - 0.5) * 0.18 * sgn;
+  }
+  if (u.head)  u.head.position.x  = (Math.random() - 0.5) * 0.12 * (u.snap > 0.5 ? 3 : 1);
+  if (u.torso) u.torso.rotation.z = (Math.random() - 0.5) * 0.18 * (u.snap > 0.5 ? 2 : 1);
+
+  // facing snaps in discrete frames instead of smoothly tracking
+  if (u.snap > 0.5 || Math.random() < 0.15) wardenFigure.lookAt(state.pos.x, 3, state.pos.z);
+  wardenFigure.rotation.y += (Math.random() - 0.5) * 0.18;
+
+  updateWardenTendrils(dt);
 
   const d = wardenFigure.position.distanceTo(state.pos);
   document.getElementById("danger").style.opacity = Math.max(0.2, Math.min(0.85, (14 - d) / 14));
@@ -1357,8 +1575,9 @@ function updateAtmosphere(dt) {
   for (let i = 1; i < pos.length; i += 3) { pos[i] += dt * 0.5; if (pos[i] > 9) pos[i] = 0; }
   spores.geometry.attributes.position.needsUpdate = true;
 
-  // tendril breathing
-  for (const t of tendrils) t.rotation.z = t.userData.baseRot + Math.sin(now * 1.2 + t.userData.phase) * 0.15;
+  // tendril breathing — real vertex undulation via the SSS shader (fake-rotation wobble retired)
+  for (const m of vineMaterials) { if (m.uniforms) m.uniforms.uTime.value = now; }
+  if (!VINE_SSS_OK) for (const t of tendrils) t.rotation.z = t.userData.baseRot + Math.sin(now * 1.2 + t.userData.phase) * 0.15;
 
   // unstable flicker lights
   for (const pl of flickerLights) {
@@ -1428,6 +1647,11 @@ function onResize() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  if (composer) {
+    composer.setSize(innerWidth, innerHeight);
+    if (bloomPass) bloomPass.setSize(innerWidth, innerHeight);
+    if (chromaPass) chromaPass.uniforms.uResolution.value.set(innerWidth, innerHeight);
+  }
 }
 
 /* ============================================================
@@ -1450,7 +1674,9 @@ function loop() {
     drawMinimap();
   }
   if (scene) updateAtmosphere(dt);
-  if (renderer) renderer.render(scene, camera);
+  updatePostFX(dt);
+  if (composer) composer.render(dt);
+  else if (renderer) renderer.render(scene, camera);
 }
 
 /* ============================================================
