@@ -161,7 +161,9 @@ setInterval(() => {
   if (!conn) return;
   for (const m of matches.values()) {
     if (m.state !== "playing") continue;
-    try { conn.reducers.wardenHeartbeat({ matchId: m.id }); } catch { /* noop */ }
+    // claim every tick: no-op if we already hold it (acts as heartbeat), takes over
+    // if the current holder went stale (>30s no heartbeat) — auto-recovery.
+    try { conn.reducers.claimWarden({ matchId: m.id }); } catch { /* noop */ }
     decideForMatch(m).catch((e) => console.error("[warden] decide error:", e?.message || e));
   }
 }, TICK_MS);
