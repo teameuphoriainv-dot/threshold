@@ -1,0 +1,27 @@
+// SpacetimeDB connection + typed table/reducer handles for THRESHOLD.
+import { DbConnection } from "./module_bindings";
+
+export { tables, reducers } from "./module_bindings";
+
+// Structural row types (the generated bindings infer rows rather than export named
+// types). These match the fields we read; useTable rows are structurally compatible.
+export interface Identityish { toHexString(): string }
+export interface Player {
+  identity: Identityish; name: string; color: number;
+  x: number; z: number; yaw: number; roomId: bigint;
+  state: string; carryingAnchorId?: bigint;
+}
+export interface ChatMessage {
+  id: bigint; sender: Identityish; senderName: string; senderColor: number;
+  text: string; roomId: bigint;
+}
+
+// Defaults target Maincloud so a fresh clone connects with no setup.
+// Override with web/.env.local for local dev (see VITE_STDB_URI there).
+const URI = import.meta.env.VITE_STDB_URI || "wss://maincloud.spacetimedb.com";
+const DB = import.meta.env.VITE_STDB_DB || "threshold";
+
+// A fresh builder for the SpacetimeDBProvider. The provider owns build()/lifecycle.
+export function connectionBuilder() {
+  return DbConnection.builder().withUri(URI).withDatabaseName(DB);
+}
