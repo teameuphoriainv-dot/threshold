@@ -148,7 +148,7 @@
       The only thing you can trust is what you can see with your own eyes.
     </div>
     <div class="ctrls">
-      <b>W A S D</b> — move &nbsp;·&nbsp; <b>← →</b> or <b>J / L</b> — turn &nbsp;·&nbsp; <b>E</b> — pick up / place anchor<br>
+      <b>W A S D</b> — move &nbsp;·&nbsp; <b>mouse</b> (click to look) or <b>← →</b> / <b>J L</b> — turn &nbsp;·&nbsp; <b>E</b> — pick up / place<br>
       A message glows <span style="color:#ffd9a8">warm</span> only when you can <i>see</i> the sender. No glow = unverifiable.
     </div>
     <div class="btn" id="startBtn">ENTER THE THRESHOLD</div>
@@ -231,6 +231,17 @@ const keys = {};
 addEventListener("keydown", e => { keys[e.code] = true; });
 addEventListener("keyup", e => { keys[e.code] = false; });
 
+// ---- mouse-look (pointer lock) — click the world to capture the mouse, Esc to release.
+// Keyboard turning (Arrow / J / L) still works. Guarded so the headless boot-test never throws.
+const MOUSE_SENS = 0.0024;
+function setupMouseLook(dom) {
+  if (!dom || !dom.addEventListener) return;   // boot-test stub: domElement is a bare object
+  dom.addEventListener("click", () => { if (dom.requestPointerLock) dom.requestPointerLock(); });
+  addEventListener("mousemove", (e) => {
+    if (document.pointerLockElement === dom) state.yaw -= e.movementX * MOUSE_SENS;
+  });
+}
+
 /* ============================================================
    WORLD BUILD
    ============================================================ */
@@ -245,6 +256,7 @@ function buildWorld() {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
   document.getElementById("app").appendChild(renderer.domElement);
+  setupMouseLook(renderer.domElement);   // pointer-lock mouse turning (keys still work)
 
   // ambient + hemisphere (cold)
   scene.add(new THREE.AmbientLight(0x3a3640, 0.85));                 // grey fill, brighter
