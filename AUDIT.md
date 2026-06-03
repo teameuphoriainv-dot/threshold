@@ -91,8 +91,8 @@ Current visuals = emissive materials + CSS overlays. Gaps:
 
 ## ⚪ TIER 3 — Non-Euclidean & feel
 
-- **3.1 Portals snap, not seamless.** `updatePortals()` (`:582`) teleports + white flash (`:596`). PRD §7 wants stencil / render-to-texture so you see *into* the next room through the doorway. README already flags this as "Wave 2, integration pending."
-- **3.2 Hyperbolic renderer orphaned.** `hyperbolic-spike.html` is a correct hyperboloid/Lorentz-boost renderer but is **not wired into the game**. PRD §7 calls for a "sealed onboarding pocket before the Warden activates" — use it as the tutorial room so players get "sea legs."
+- **3.1 Seamless render-to-texture portals — ✅ DONE.** Each veil now shows the **live destination room** via a per-veil `WebGLRenderTarget` + virtual portal camera (`renderPortalViews`/`placePortalCamera`). Fixed the verifier-flagged defect: the portal camera mirrors **both eye and look-target** through the doorway (`portalMirror`), so the view tracks the player's gaze (real parallax, not a flat painted window). Guard pattern: only activates when r128 RT support exists; falls back to the translucent veil under the stub. Snap-teleport still handles the actual crossing. Known follow-ups (verifier): no oblique near-plane clip (geometry behind the exit can bleed); RT not disposed (fine for single-load).
+- **3.2 Hyperbolic renderer — ✅ surfaced (full pocket deferred).** Added a "get your sea legs →" link on the start screen to `hyperbolic-spike.html`, so the true-hyperbolic wow is discoverable/demo-able instead of orphaned. Full *in-game* sealed pocket (running the hyperboloid projection inside the main loop before the Warden activates) is a projection-merge — Sriyan-lane, deferred.
 - **3.3 No mouse-look.** Turning is keyboard-only (`:953`, Arrow/J/L). For a horror game the camera feel is weak — add pointer-lock mouse. (§9 perspective decision: current third-person matches the PRD recommendation. ✓)
 - **3.4 Gravity-shift rooms + Penrose stairs** (§7 / Tier 4) absent — fine to defer.
 

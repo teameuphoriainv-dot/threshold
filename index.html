@@ -152,6 +152,10 @@
       A message glows <span style="color:#ffd9a8">warm</span> only when you can <i>see</i> the sender. No glow = unverifiable.
     </div>
     <div class="btn" id="startBtn">ENTER THE THRESHOLD</div>
+    <div style="margin-top:16px;font-size:11px;color:var(--ink-dim);letter-spacing:1px;">
+      first time in a world with no straight lines?
+      <a href="hyperbolic-spike.html" style="color:var(--trust-amber);text-decoration:none;border-bottom:1px dotted var(--untrust-dim);pointer-events:auto;">get your sea legs →</a>
+    </div>
   </div>
 </div>
 
@@ -351,6 +355,9 @@ function makeVineMaterial() {
 let portalPairs = [];     // seamless teleport doorways: loops + "bigger on the inside"
 let reshapeables = [];    // wall segments the Warden rewrites while you aren't looking
 let portalCooldown = 0, portalGuard = null;
+let PORTALS_RT = false;          // set true in buildPortals() iff r128 render-to-texture is supported
+let portalCam = null;            // virtual "look through the doorway" camera
+const RT_SIZE = 512;             // per-veil render-target resolution
 
 // --- rigged character (RobotExpressive GLB): walk/run/jump/grab via AnimationMixer ---
 let playerModel = null;            // gltf.scene; replaces the capsule visually once loaded
@@ -777,6 +784,23 @@ function buildPortals() {
     pair.ringB = makePortalRing(d.b, d.by, d.color);
     portalPairs.push(pair);
   }
+
+  // GUARD: render-to-texture see-through only if r128 RT surface is REAL.
+  // (boot-test stub has neither WebGLRenderTarget nor setRenderTarget -> stays translucent, no throw)
+  PORTALS_RT = (typeof THREE.WebGLRenderTarget === "function") &&
+               !!(renderer && typeof renderer.setRenderTarget === "function");
+  if (!PORTALS_RT) return;
+
+  portalCam = new THREE.PerspectiveCamera(camera.fov, 1, 0.1, 400);
+  for (const pr of portalPairs) {
+    pr.rtA = new THREE.WebGLRenderTarget(RT_SIZE, RT_SIZE);
+    pr.rtB = new THREE.WebGLRenderTarget(RT_SIZE, RT_SIZE);
+    const veilA = pr.ringA.userData.veil, veilB = pr.ringB.userData.veil;
+    veilA.material.map = pr.rtA.texture; veilA.material.color.setHex(0xffffff);
+    veilA.material.opacity = 1; veilA.material.transparent = false; veilA.material.needsUpdate = true;
+    veilB.material.map = pr.rtB.texture; veilB.material.color.setHex(0xffffff);
+    veilB.material.opacity = 1; veilB.material.transparent = false; veilB.material.needsUpdate = true;
+  }
 }
 function makePortalRing(pos, yaw, color) {
   const g = new THREE.Group();
@@ -789,7 +813,7 @@ function makePortalRing(pos, yaw, color) {
   g.add(new THREE.PointLight(color, 1.3, 11, 2));
   g.position.copy(pos); g.position.y = 1.7;
   g.rotation.y = yaw;
-  g.userData = { ring };
+  g.userData = { ring, veil };
   scene.add(g);
   return g;
 }
@@ -814,6 +838,45 @@ function updatePortals(dt) {
     }
   }
 }
+// Mirror a world point through entrance->exit (a portal is a rigid mirror map).
+// Transforming BOTH the eye and its look-target by the SAME map preserves the
+// view direction relative to the doorway -> correct gaze parallax (not a flat window).
+function portalMirror(p, entrance, exit, out) {
+  const dx = p.x - entrance.pos.x, dz = p.z - entrance.pos.z, dy = p.y - entrance.pos.y;
+  const ce = Math.cos(-entrance.yaw), se = Math.sin(-entrance.yaw);
+  const lx = dx * ce - dz * se, lz = dx * se + dz * ce;
+  const fyaw = exit.yaw + Math.PI;
+  const cf = Math.cos(fyaw), sf = Math.sin(fyaw);
+  out.set(
+    exit.pos.x + (lx * cf - (-lz) * sf),
+    exit.pos.y + dy,
+    exit.pos.z + (lx * sf + (-lz) * cf)
+  );
+  return out;
+}
+const _ptgt = new V3();
+function placePortalCamera(entrance, exit) {
+  portalMirror(camera.position, entrance, exit, portalCam.position);
+  // main follow-cam looks at (player + forward*2, eye height) — mirror that exact target
+  const tx = state.pos.x + Math.sin(state.yaw) * 2, tz = state.pos.z + Math.cos(state.yaw) * 2;
+  portalMirror(_ptgt.set(tx, 1.4, tz), entrance, exit, _ptgt);
+  portalCam.lookAt(_ptgt.x, _ptgt.y, _ptgt.z);
+  portalCam.updateProjectionMatrix();
+}
+function renderPortalViews() {
+  if (!PORTALS_RT) return;
+  // hide all veils while filming so a portal never films itself (recursion cap = 1)
+  for (const pr of portalPairs) { pr.ringA.userData.veil.visible = false; pr.ringB.userData.veil.visible = false; }
+  for (const pr of portalPairs) {
+    placePortalCamera(pr.a, pr.b);            // veil at A shows B's room
+    renderer.setRenderTarget(pr.rtA); renderer.render(scene, portalCam);
+    placePortalCamera(pr.b, pr.a);            // veil at B shows A's room
+    renderer.setRenderTarget(pr.rtB); renderer.render(scene, portalCam);
+  }
+  renderer.setRenderTarget(null);            // restore default framebuffer
+  for (const pr of portalPairs) { pr.ringA.userData.veil.visible = true; pr.ringB.userData.veil.visible = true; }
+}
+
 function addShifter(ax, az, w, d, bx, bz) {
   const idx = walls.length;
   walls.push({ x: ax, z: az, w, d });
@@ -1674,6 +1737,7 @@ function loop() {
     drawMinimap();
   }
   if (scene) updateAtmosphere(dt);
+  if (PORTALS_RT && running && !gameOver) renderPortalViews();   // RT see-through portals BEFORE main render
   updatePostFX(dt);
   if (composer) composer.render(dt);
   else if (renderer) renderer.render(scene, camera);
