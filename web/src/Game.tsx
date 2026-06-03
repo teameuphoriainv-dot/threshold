@@ -119,7 +119,8 @@ function LocalPlayer({ self, onMove }: { self: Self; onMove: (x: number, z: numb
     if (keys["KeyD"]) move.add(right);
     if (keys["KeyA"]) move.sub(right);
     const run = keys["ShiftLeft"] || keys["ShiftRight"];
-    const speed = 7.2 * (run ? 1.75 : 1);
+    const sc = self.scale ?? 1;                 // non-Euclidean player size (portals §7)
+    const speed = 7.2 * (run ? 1.75 : 1) * sc;  // shrunk -> slower -> world feels huge
     let dvx = 0, dvz = 0;
     if (move.lengthSq() > 0) { move.normalize(); dvx = move.x * speed; dvz = move.z * speed; }
     const a = 1 - Math.exp(-(dvx || dvz ? 16 : 11) * dt);
@@ -128,10 +129,10 @@ function LocalPlayer({ self, onMove }: { self: Self; onMove: (x: number, z: numb
     let nx = self.x + vel.current.x * dt, nz = self.z + vel.current.z * dt;
     [nx, nz] = collide(nx, nz, PLAYER_R);
     self.x = nx; self.z = nz;
-    if (body.current) { body.current.position.set(nx, 0, nz); body.current.rotation.y = Math.atan2(fwd.x, fwd.z); }
+    if (body.current) { body.current.position.set(nx, 0, nz); body.current.rotation.y = Math.atan2(fwd.x, fwd.z); body.current.scale.setScalar(sc); }
 
-    // third-person camera
-    const camDist = 6.2, camH = 4.2;
+    // third-person camera (scales with player size — the bigger-on-the-inside cue)
+    const camDist = 6.2 * sc, camH = 4.2 * sc;
     const desired = new THREE.Vector3(nx - fwd.x * camDist, camH, nz - fwd.z * camDist);
     camera.position.lerp(desired, 1 - Math.pow(0.0009, dt));
     camera.lookAt(nx + fwd.x * 2, 1.4, nz + fwd.z * 2);
@@ -367,7 +368,7 @@ export function Game() {
   useKeyboard();
   const conn = useSpacetimeDB();
   const myId = idHex(conn.identity);
-  const selfRef = useRef<Self>({ x: 0, z: 26, yaw: 0 });
+  const selfRef = useRef<Self>({ x: 0, z: 26, yaw: 0, scale: 1 });
 
   const [players] = useTable(tables.player);
   const [matches] = useTable(tables.game_match);

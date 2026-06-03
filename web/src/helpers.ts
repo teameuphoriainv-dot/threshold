@@ -1,5 +1,7 @@
 // Shared helpers used across Game + gameplay components.
-export type Self = { x: number; z: number; yaw: number };
+// `scale` is the non-Euclidean player size (HackerPoet §7): crossing a scale
+// portal multiplies it, so the world feels bigger/smaller. Defaults to 1.
+export type Self = { x: number; z: number; yaw: number; scale: number };
 
 export const idHex = (id: { toHexString?: () => string } | undefined): string =>
   id && typeof id.toHexString === "function" ? id.toHexString() : String(id ?? "");

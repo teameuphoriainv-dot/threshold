@@ -14,7 +14,7 @@ import { canSee } from "./world.ts";
 
 const KEY = process.env.ANTHROPIC_API_KEY;
 const URI = process.env.STDB_URI || "wss://maincloud.spacetimedb.com";
-const DB = process.env.STDB_DB || "whispers";
+const DB = process.env.STDB_DB || "whispers-live";
 if (!KEY) { console.error("Missing ANTHROPIC_API_KEY in warden/.env"); process.exit(1); }
 
 const anthropic = new Anthropic({ apiKey: KEY });

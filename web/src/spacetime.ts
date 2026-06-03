@@ -27,7 +27,7 @@ export interface WardenAction { id: bigint; matchId: bigint; actionType: string;
 // Defaults target Maincloud so a fresh clone connects with no setup.
 // Override with web/.env.local for local dev (see VITE_STDB_URI there).
 const URI = import.meta.env.VITE_STDB_URI || "wss://maincloud.spacetimedb.com";
-const DB = import.meta.env.VITE_STDB_DB || "whispers";
+const DB = import.meta.env.VITE_STDB_DB || "whispers-live";
 
 // A fresh builder for the SpacetimeDBProvider. The provider owns build()/lifecycle.
 export function connectionBuilder() {
