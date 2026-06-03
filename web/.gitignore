@@ -25,3 +25,6 @@ dist-ssr
 
 .env.local
 .vercel
+
+# huge source scan — only the optimized ground.glb ships
+public/alien_landscape.glb

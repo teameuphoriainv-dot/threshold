@@ -11,9 +11,8 @@ import {
 } from "spacetimedb";
 
 export default {
+  matchId: __t.u64(),
   actionType: __t.string(),
   target: __t.string(),
-  roomId: __t.u64(),
-  energy: __t.f32(),
   phase: __t.u8(),
 };

@@ -12,8 +12,8 @@ import {
 
 export default __t.row({
   id: __t.u64().primaryKey(),
+  matchId: __t.u64().name("match_id"),
   absorbed: __t.identity(),
   x: __t.f32(),
   z: __t.f32(),
-  roomId: __t.u64().name("room_id"),
 });

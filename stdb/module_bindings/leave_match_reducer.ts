@@ -10,8 +10,4 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {
-  x: __t.f32(),
-  z: __t.f32(),
-  roomId: __t.u64(),
-};
+export default {};

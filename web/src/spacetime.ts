@@ -7,19 +7,22 @@ export { tables, reducers } from "./module_bindings";
 // types). These match the fields we read; useTable rows are structurally compatible.
 export interface Identityish { toHexString(): string }
 export interface Player {
-  identity: Identityish; name: string; color: number;
-  x: number; z: number; yaw: number; roomId: bigint;
+  identity: Identityish; name: string; color: number; matchId: bigint;
+  x: number; z: number; yaw: number;
   state: string; carryingAnchorId?: bigint;
 }
+export interface GameMatch {
+  id: bigint; code: string; state: string; phase: number;
+  anchorsPlaced: number; exitOpen: boolean;
+}
 export interface ChatMessage {
-  id: bigint; sender: Identityish; senderName: string; senderColor: number;
-  text: string; roomId: bigint;
+  id: bigint; matchId: bigint; sender: Identityish; senderName: string; senderColor: number; text: string;
 }
 export interface Anchor {
-  id: bigint; kind: string; x: number; z: number; carriedBy?: Identityish; placed: boolean;
+  id: bigint; matchId: bigint; kind: string; x: number; z: number; carriedBy?: Identityish; placed: boolean;
 }
-export interface Tether { id: bigint; absorbed: Identityish; x: number; z: number; }
-export interface WardenAction { id: bigint; actionType: string; target: string; createdAt: unknown; }
+export interface Tether { id: bigint; matchId: bigint; absorbed: Identityish; x: number; z: number; }
+export interface WardenAction { id: bigint; matchId: bigint; actionType: string; target: string; }
 
 // Defaults target Maincloud so a fresh clone connects with no setup.
 // Override with web/.env.local for local dev (see VITE_STDB_URI there).

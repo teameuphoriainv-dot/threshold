@@ -12,10 +12,10 @@ import {
 
 export default __t.row({
   id: __t.u64().primaryKey(),
+  matchId: __t.u64().name("match_id"),
   kind: __t.string(),
   x: __t.f32(),
   z: __t.f32(),
-  roomId: __t.u64().name("room_id"),
   carriedBy: __t.option(__t.identity()).name("carried_by"),
   placed: __t.bool(),
 });

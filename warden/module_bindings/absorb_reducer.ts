@@ -11,5 +11,6 @@ import {
 } from "spacetimedb";
 
 export default {
+  matchId: __t.u64(),
   victim: __t.identity(),
 };

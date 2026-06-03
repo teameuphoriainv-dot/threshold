@@ -12,8 +12,8 @@ import {
 
 export default __t.row({
   id: __t.u64().primaryKey(),
+  matchId: __t.u64().name("match_id"),
   actionType: __t.string().name("action_type"),
   target: __t.string(),
-  roomId: __t.u64().name("room_id"),
   createdAt: __t.timestamp().name("created_at"),
 });

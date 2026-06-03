@@ -12,10 +12,10 @@ import {
 
 export default __t.row({
   id: __t.u64().primaryKey(),
+  matchId: __t.u64().name("match_id"),
   sender: __t.identity(),
   senderName: __t.string().name("sender_name"),
   senderColor: __t.u32().name("sender_color"),
   text: __t.string(),
-  roomId: __t.u64().name("room_id"),
   createdAt: __t.timestamp().name("created_at"),
 });

@@ -10,12 +10,6 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default __t.row({
-  id: __t.u64().primaryKey(),
-  timeLeft: __t.f32().name("time_left"),
-  started: __t.bool(),
-  phase: __t.u8(),
-  anchorsPlaced: __t.u8().name("anchors_placed"),
-  exitOpen: __t.bool().name("exit_open"),
-  outcome: __t.string(),
-});
+export default {
+  code: __t.string(),
+};

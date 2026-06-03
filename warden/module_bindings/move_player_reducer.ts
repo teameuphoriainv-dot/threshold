@@ -14,7 +14,6 @@ export default {
   x: __t.f32(),
   z: __t.f32(),
   yaw: __t.f32(),
-  roomId: __t.u64(),
   state: __t.string(),
   carryingAnchorId: __t.option(__t.u64()),
 };

@@ -12,10 +12,10 @@ import {
 
 export const Anchor = __t.object("Anchor", {
   id: __t.u64(),
+  matchId: __t.u64(),
   kind: __t.string(),
   x: __t.f32(),
   z: __t.f32(),
-  roomId: __t.u64(),
   carriedBy: __t.option(__t.identity()),
   placed: __t.bool(),
 });
@@ -23,91 +23,58 @@ export type Anchor = __Infer<typeof Anchor>;
 
 export const ChatMessage = __t.object("ChatMessage", {
   id: __t.u64(),
+  matchId: __t.u64(),
   sender: __t.identity(),
   senderName: __t.string(),
   senderColor: __t.u32(),
   text: __t.string(),
-  roomId: __t.u64(),
   createdAt: __t.timestamp(),
 });
 export type ChatMessage = __Infer<typeof ChatMessage>;
 
-export const MatchState = __t.object("MatchState", {
+export const GameMatch = __t.object("GameMatch", {
   id: __t.u64(),
+  code: __t.string(),
+  state: __t.string(),
   timeLeft: __t.f32(),
-  started: __t.bool(),
   phase: __t.u8(),
   anchorsPlaced: __t.u8(),
   exitOpen: __t.bool(),
-  outcome: __t.string(),
+  wardenIdentity: __t.option(__t.identity()),
+  wardenLastAction: __t.timestamp(),
+  createdAt: __t.timestamp(),
 });
-export type MatchState = __Infer<typeof MatchState>;
+export type GameMatch = __Infer<typeof GameMatch>;
 
 export const Player = __t.object("Player", {
   identity: __t.identity(),
   name: __t.string(),
   color: __t.u32(),
+  matchId: __t.u64(),
   x: __t.f32(),
   z: __t.f32(),
   yaw: __t.f32(),
-  roomId: __t.u64(),
   state: __t.string(),
   carryingAnchorId: __t.option(__t.u64()),
   lastSeen: __t.timestamp(),
 });
 export type Player = __Infer<typeof Player>;
 
-export const Room = __t.object("Room", {
-  id: __t.u64(),
-  template: __t.string(),
-  transformState: __t.string(),
-  distortion: __t.f32(),
-});
-export type Room = __Infer<typeof Room>;
-
-export const RoomExit = __t.object("RoomExit", {
-  id: __t.u64(),
-  fromRoom: __t.u64(),
-  toRoom: __t.u64(),
-  direction: __t.string(),
-  sealed: __t.bool(),
-});
-export type RoomExit = __Infer<typeof RoomExit>;
-
 export const Tether = __t.object("Tether", {
   id: __t.u64(),
+  matchId: __t.u64(),
   absorbed: __t.identity(),
   x: __t.f32(),
   z: __t.f32(),
-  roomId: __t.u64(),
 });
 export type Tether = __Infer<typeof Tether>;
 
 export const WardenAction = __t.object("WardenAction", {
   id: __t.u64(),
+  matchId: __t.u64(),
   actionType: __t.string(),
   target: __t.string(),
-  roomId: __t.u64(),
   createdAt: __t.timestamp(),
 });
 export type WardenAction = __Infer<typeof WardenAction>;
-
-export const WardenState = __t.object("WardenState", {
-  id: __t.u64(),
-  energy: __t.f32(),
-  phase: __t.u8(),
-  manifestCd: __t.f32(),
-  wardenIdentity: __t.option(__t.identity()),
-  lastActionAt: __t.timestamp(),
-});
-export type WardenState = __Infer<typeof WardenState>;
-
-export const WorldEvent = __t.object("WorldEvent", {
-  id: __t.u64(),
-  kind: __t.string(),
-  roomId: __t.u64(),
-  description: __t.string(),
-  createdAt: __t.timestamp(),
-});
-export type WorldEvent = __Infer<typeof WorldEvent>;
 

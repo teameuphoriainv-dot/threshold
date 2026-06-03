@@ -8,8 +8,8 @@ import { fx, dispatchWardenAction, shakeNoise } from "./fx";
 
 // Subscribe to warden_action; fire FX for NEW rows only (skip the backlog replayed
 // on initial subscription).
-export function useWardenActions(self: Self) {
-  const [actions] = useTable(tables.warden_action);
+export function useWardenActions(self: Self, matchId: bigint) {
+  const [actions] = useTable(tables.warden_action.where((r) => r.matchId.eq(matchId)));
   const seen = useRef(-1);
   useEffect(() => {
     if (seen.current < 0) { seen.current = actions.length; return; }

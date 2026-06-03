@@ -36,14 +36,15 @@ import {
 // Import all reducer arg schemas
 import AbsorbReducer from "./absorb_reducer";
 import ClaimWardenReducer from "./claim_warden_reducer";
+import CreateMatchReducer from "./create_match_reducer";
+import JoinMatchReducer from "./join_match_reducer";
+import LeaveMatchReducer from "./leave_match_reducer";
 import MovePlayerReducer from "./move_player_reducer";
 import PickupAnchorReducer from "./pickup_anchor_reducer";
 import PlaceAnchorReducer from "./place_anchor_reducer";
 import RescueReducer from "./rescue_reducer";
-import SealCorridorReducer from "./seal_corridor_reducer";
 import SendChatReducer from "./send_chat_reducer";
 import SetNameReducer from "./set_name_reducer";
-import SpawnLureReducer from "./spawn_lure_reducer";
 import StartMatchReducer from "./start_match_reducer";
 import WardenActReducer from "./warden_act_reducer";
 import WardenHeartbeatReducer from "./warden_heartbeat_reducer";
@@ -54,14 +55,10 @@ import WardenMimicReducer from "./warden_mimic_reducer";
 // Import all table schema definitions
 import AnchorRow from "./anchor_table";
 import ChatMessageRow from "./chat_message_table";
-import MatchStateRow from "./match_state_table";
+import GameMatchRow from "./game_match_table";
 import PlayerRow from "./player_table";
-import RoomRow from "./room_table";
-import RoomExitRow from "./room_exit_table";
 import TetherRow from "./tether_table";
 import WardenActionRow from "./warden_action_table";
-import WardenStateRow from "./warden_state_table";
-import WorldEventRow from "./world_event_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -72,6 +69,9 @@ const tablesSchema = __schema({
     indexes: [
       { accessor: 'id', name: 'anchor_id_idx_btree', algorithm: 'btree', columns: [
         'id',
+      ] },
+      { accessor: 'match_id', name: 'anchor_match_id_idx_btree', algorithm: 'btree', columns: [
+        'matchId',
       ] },
     ],
     constraints: [
@@ -84,66 +84,47 @@ const tablesSchema = __schema({
       { accessor: 'id', name: 'chat_message_id_idx_btree', algorithm: 'btree', columns: [
         'id',
       ] },
+      { accessor: 'match_id', name: 'chat_message_match_id_idx_btree', algorithm: 'btree', columns: [
+        'matchId',
+      ] },
     ],
     constraints: [
       { name: 'chat_message_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ChatMessageRow),
-  match_state: __table({
-    name: 'match_state',
+  game_match: __table({
+    name: 'game_match',
     indexes: [
-      { accessor: 'id', name: 'match_state_id_idx_btree', algorithm: 'btree', columns: [
+      { accessor: 'id', name: 'game_match_id_idx_btree', algorithm: 'btree', columns: [
         'id',
       ] },
     ],
     constraints: [
-      { name: 'match_state_id_key', constraint: 'unique', columns: ['id'] },
+      { name: 'game_match_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, MatchStateRow),
+  }, GameMatchRow),
   player: __table({
     name: 'player',
     indexes: [
       { accessor: 'identity', name: 'player_identity_idx_btree', algorithm: 'btree', columns: [
         'identity',
       ] },
+      { accessor: 'match_id', name: 'player_match_id_idx_btree', algorithm: 'btree', columns: [
+        'matchId',
+      ] },
     ],
     constraints: [
       { name: 'player_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, PlayerRow),
-  room: __table({
-    name: 'room',
-    indexes: [
-      { accessor: 'id', name: 'room_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-    ],
-    constraints: [
-      { name: 'room_id_key', constraint: 'unique', columns: ['id'] },
-    ],
-  }, RoomRow),
-  room_exit: __table({
-    name: 'room_exit',
-    indexes: [
-      { accessor: 'from_room', name: 'room_exit_from_room_idx_btree', algorithm: 'btree', columns: [
-        'fromRoom',
-      ] },
-      { accessor: 'id', name: 'room_exit_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-    ],
-    constraints: [
-      { name: 'room_exit_id_key', constraint: 'unique', columns: ['id'] },
-    ],
-  }, RoomExitRow),
   tether: __table({
     name: 'tether',
     indexes: [
-      { accessor: 'absorbed', name: 'tether_absorbed_idx_btree', algorithm: 'btree', columns: [
-        'absorbed',
-      ] },
       { accessor: 'id', name: 'tether_id_idx_btree', algorithm: 'btree', columns: [
         'id',
+      ] },
+      { accessor: 'match_id', name: 'tether_match_id_idx_btree', algorithm: 'btree', columns: [
+        'matchId',
       ] },
     ],
     constraints: [
@@ -156,47 +137,29 @@ const tablesSchema = __schema({
       { accessor: 'id', name: 'warden_action_id_idx_btree', algorithm: 'btree', columns: [
         'id',
       ] },
+      { accessor: 'match_id', name: 'warden_action_match_id_idx_btree', algorithm: 'btree', columns: [
+        'matchId',
+      ] },
     ],
     constraints: [
       { name: 'warden_action_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, WardenActionRow),
-  warden_state: __table({
-    name: 'warden_state',
-    indexes: [
-      { accessor: 'id', name: 'warden_state_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-    ],
-    constraints: [
-      { name: 'warden_state_id_key', constraint: 'unique', columns: ['id'] },
-    ],
-  }, WardenStateRow),
-  world_event: __table({
-    name: 'world_event',
-    indexes: [
-      { accessor: 'id', name: 'world_event_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-    ],
-    constraints: [
-      { name: 'world_event_id_key', constraint: 'unique', columns: ['id'] },
-    ],
-  }, WorldEventRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("absorb", AbsorbReducer),
   __reducerSchema("claim_warden", ClaimWardenReducer),
+  __reducerSchema("create_match", CreateMatchReducer),
+  __reducerSchema("join_match", JoinMatchReducer),
+  __reducerSchema("leave_match", LeaveMatchReducer),
   __reducerSchema("move_player", MovePlayerReducer),
   __reducerSchema("pickup_anchor", PickupAnchorReducer),
   __reducerSchema("place_anchor", PlaceAnchorReducer),
   __reducerSchema("rescue", RescueReducer),
-  __reducerSchema("seal_corridor", SealCorridorReducer),
   __reducerSchema("send_chat", SendChatReducer),
   __reducerSchema("set_name", SetNameReducer),
-  __reducerSchema("spawn_lure", SpawnLureReducer),
   __reducerSchema("start_match", StartMatchReducer),
   __reducerSchema("warden_act", WardenActReducer),
   __reducerSchema("warden_heartbeat", WardenHeartbeatReducer),

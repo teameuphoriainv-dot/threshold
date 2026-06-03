@@ -12,8 +12,13 @@ import {
 
 export default __t.row({
   id: __t.u64().primaryKey(),
-  kind: __t.string(),
-  roomId: __t.u64().name("room_id"),
-  description: __t.string(),
+  code: __t.string(),
+  state: __t.string(),
+  timeLeft: __t.f32().name("time_left"),
+  phase: __t.u8(),
+  anchorsPlaced: __t.u8().name("anchors_placed"),
+  exitOpen: __t.bool().name("exit_open"),
+  wardenIdentity: __t.option(__t.identity()).name("warden_identity"),
+  wardenLastAction: __t.timestamp().name("warden_last_action"),
   createdAt: __t.timestamp().name("created_at"),
 });
