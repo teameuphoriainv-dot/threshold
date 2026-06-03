@@ -1,4 +1,4 @@
-// SpacetimeDB connection + typed table/reducer handles for THRESHOLD.
+// SpacetimeDB connection + typed table/reducer handles for WHISPERS.
 import { DbConnection } from "./module_bindings";
 
 export { tables, reducers } from "./module_bindings";
@@ -24,7 +24,7 @@ export interface WardenAction { id: bigint; actionType: string; target: string; 
 // Defaults target Maincloud so a fresh clone connects with no setup.
 // Override with web/.env.local for local dev (see VITE_STDB_URI there).
 const URI = import.meta.env.VITE_STDB_URI || "wss://maincloud.spacetimedb.com";
-const DB = import.meta.env.VITE_STDB_DB || "threshold";
+const DB = import.meta.env.VITE_STDB_DB || "whispers";
 
 // A fresh builder for the SpacetimeDBProvider. The provider owns build()/lifecycle.
 export function connectionBuilder() {

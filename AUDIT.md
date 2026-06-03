@@ -1,4 +1,4 @@
-# THRESHOLD — Build Audit vs PRD
+# WHISPERS — Build Audit vs PRD
 
 > Audit of the current repo against `PRD.md`, ranked by **prize impact** (Grand · Best Web App · Best Use of LLMs), not PRD section order. Every claim cites `file:line` in the current `index.html` (1261 lines) or `hyperbolic-spike.html`.
 >

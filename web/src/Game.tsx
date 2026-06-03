@@ -203,7 +203,7 @@ function Scene({ self, players, myId, onMove, anchors, tethers, pickup, place, r
       <InteractionLayer anchors={anchors} tethers={tethers} players={players} myId={myId} self={self}
         pickup={pickup} place={place} rescue={rescue} />
       <EffectComposer>
-        <Bloom intensity={0.9} luminanceThreshold={0.5} luminanceSmoothing={0.4} mipmapBlur />
+        <Bloom intensity={0.9} luminanceWhispers={0.5} luminanceSmoothing={0.4} mipmapBlur />
         <ChromaticAberration offset={[0.0006, 0.0006]} />
         <Vignette eskil={false} offset={0.25} darkness={0.95} />
       </EffectComposer>
@@ -273,7 +273,7 @@ function Hud({ players, myId, self, anchorsPlaced, exitOpen }: { players: readon
   return (
     <div id="hud">
       <div className="panel" id="anchors">ANCHORS<br /><span className="n">{anchorsPlaced}</span> / 3 secured</div>
-      <div className="panel" id="top"><div className="title">THRESHOLD</div><div className="sub" style={exitOpen ? { color: "#ff9a86" } : undefined}>{exitOpen ? "the threshold is OPEN — escape now" : "the world does not want you to leave"}</div></div>
+      <div className="panel" id="top"><div className="title">WHISPERS</div><div className="sub" style={exitOpen ? { color: "#ff9a86" } : undefined}>{exitOpen ? "the way is OPEN — escape now" : "the world does not want you to leave"}</div></div>
       <div className="panel" id="roster">
         <div style={{ color: "#9a7e84", marginBottom: 4, letterSpacing: 2 }}>SURVIVORS</div>
         <div className="who"><span><span className="dot" style={{ background: "#ffb066" }} />{me?.name ?? "You"}</span><span className="seen">self</span></div>
@@ -323,20 +323,20 @@ export function Game() {
     void move({ x, z, yaw, roomId: 0n, state: "active", carryingAnchorId: undefined });
 
   if (!conn.isActive) {
-    return <div className="screen"><div className="box"><h1>THRESHOLD</h1><div className="tag">opening a door to the dark…</div></div></div>;
+    return <div className="screen"><div className="box"><h1>WHISPERS</h1><div className="tag">opening a door to the dark…</div></div></div>;
   }
 
   if (!started) {
     return (
       <div className="screen"><div className="box">
-        <h1>THRESHOLD</h1>
+        <h1>WHISPERS</h1>
         <div className="tag">
           You are trapped in the Upside Down with whoever else is here. Find the anchors and escape together.<br /><br />
           A message glows <span style={{ color: "#ffd9a8" }}>warm</span> only when you can <i>see</i> the sender.
           No glow = it might be the Warden wearing their voice.
         </div>
         <div className="tag" style={{ color: "#7ad1ff" }}>● connected to SpacetimeDB — {players.length} here</div>
-        <div className="btn" onClick={() => { setStarted(true); void startMatch(); }}>ENTER THE THRESHOLD</div>
+        <div className="btn" onClick={() => { setStarted(true); void startMatch(); }}>ENTER THE WHISPERS</div>
       </div></div>
     );
   }

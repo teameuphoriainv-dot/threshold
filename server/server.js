@@ -1,6 +1,6 @@
 "use strict";
 /* ============================================================
-   THRESHOLD — multiplayer relay (HYBRID step toward SpacetimeDB).
+   WHISPERS — multiplayer relay (HYBRID step toward SpacetimeDB).
 
    This is the throwaway/parallel transport: a tiny authoritative-ish
    WebSocket server that syncs players + chat so multiple humans can
@@ -55,7 +55,7 @@ function broadcast(obj, exceptId) {
 }
 
 const wss = new WebSocketServer({ port: PORT });
-console.log(`[THRESHOLD relay] listening on ws://0.0.0.0:${PORT}`);
+console.log(`[WHISPERS relay] listening on ws://0.0.0.0:${PORT}`);
 
 wss.on("connection", (ws) => {
   const id = nextId++;

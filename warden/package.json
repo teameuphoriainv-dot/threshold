@@ -1,9 +1,9 @@
 {
-  "name": "threshold-warden",
+  "name": "whispers-warden",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "THRESHOLD privileged Warden client — connects to SpacetimeDB, claims the Warden identity, and drives the adversary via Claude (PRD §6/§10).",
+  "description": "WHISPERS privileged Warden client — connects to SpacetimeDB, claims the Warden identity, and drives the adversary via Claude (PRD §6/§10).",
   "scripts": {
     "start": "tsx warden.ts"
   },

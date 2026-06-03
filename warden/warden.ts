@@ -1,5 +1,5 @@
 /**
- * THRESHOLD — the Warden (privileged SpacetimeDB client + Claude).
+ * WHISPERS — the Warden (privileged SpacetimeDB client + Claude).
  *
  * WASM reducers can't call an LLM, so the Warden lives here (PRD §10): it connects
  * to SpacetimeDB, claims the privileged identity, subscribes to the live game, and
@@ -14,7 +14,7 @@ import { canSee } from "./world.ts";
 
 const KEY = process.env.ANTHROPIC_API_KEY;
 const URI = process.env.STDB_URI || "wss://maincloud.spacetimedb.com";
-const DB = process.env.STDB_DB || "threshold";
+const DB = process.env.STDB_DB || "whispers";
 if (!KEY) { console.error("Missing ANTHROPIC_API_KEY in warden/.env"); process.exit(1); }
 
 const anthropic = new Anthropic({ apiKey: KEY });

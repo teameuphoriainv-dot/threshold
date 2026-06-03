@@ -1,4 +1,4 @@
-//! THRESHOLD — SpacetimeDB module (Rust).
+//! WHISPERS — SpacetimeDB module (Rust).
 //!
 //! The nervous system (PRD §2.2/§10). All shared mutable state lives here:
 //! players, world topology, anchors, chat, the Warden's state + action log.
@@ -205,7 +205,7 @@ pub fn init(ctx: &ReducerContext) {
     ctx.db.anchor().insert(Anchor {
         id: 0, kind: "fake".to_string(), x: 12.0, z: -18.0, room_id: 0, carried_by: None, placed: false,
     });
-    log::info!("THRESHOLD module initialized");
+    log::info!("WHISPERS module initialized");
 }
 
 #[spacetimedb::reducer(client_connected)]

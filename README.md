@@ -1,4 +1,4 @@
-# THRESHOLD
+# WHISPERS
 
 A non-Euclidean multiplayer horror game where an LLM-powered entity hunts you through a shifting Upside Down. It learns how you talk, wears your friends' voices, and reshapes the world to break your trust in each other.
 

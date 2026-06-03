@@ -1,4 +1,4 @@
-# THRESHOLD — Claude LLM + SpacetimeDB Integration Guide
+# WHISPERS — Claude LLM + SpacetimeDB Integration Guide
 
 > How the single-player slice becomes the real multiplayer game with an LLM Warden.
 > Architecture is per PRD §10. **Version-specific API snippets below are being hardened by a research pass** — treat code as the *shape*, pin exact syntax against current SpacetimeDB + Anthropic docs before relying on it.

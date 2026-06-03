@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>THRESHOLD</title>
+<title>WHISPERS</title>
 <!--
-  THRESHOLD - playable vertical slice (single-file, zero-install).
+  WHISPERS - playable vertical slice (single-file, zero-install).
   This proves the SOUL of the PRD: the trust/mimicry mechanic + Upside Down atmosphere.
 
   WHAT IS REAL HERE:
@@ -132,7 +132,7 @@
 
 <div id="hud">
   <div class="panel" id="anchors">ANCHORS<br><span class="n" id="anchorN">0</span> / 3 secured</div>
-  <div class="panel" id="top"><div class="title">THRESHOLD</div><div class="sub" id="topsub">the world does not want you to leave</div></div>
+  <div class="panel" id="top"><div class="title">WHISPERS</div><div class="sub" id="topsub">the world does not want you to leave</div></div>
   <div class="panel" id="timer">ESCAPE IN<br><span class="t" id="time">10:00</span><div id="phase">phase 1 — it is watching</div></div>
   <div class="panel" id="roster"></div>
   <canvas id="minimap" width="170" height="170"></canvas>
@@ -144,7 +144,7 @@
 <!-- START -->
 <div class="screen" id="start">
   <div class="box">
-    <h1>THRESHOLD</h1>
+    <h1>WHISPERS</h1>
     <div class="tag">
       You are trapped in the Upside Down. Find <b>3 anchors</b>, carry them to the convergence ring,
       and escape together.<br><br>
@@ -156,7 +156,7 @@
       <b>W A S D</b> — move &nbsp;·&nbsp; <b>mouse</b> (click to look) or <b>← →</b> / <b>J L</b> — turn &nbsp;·&nbsp; <b>E</b> — pick up / place<br>
       A message glows <span style="color:#ffd9a8">warm</span> only when you can <i>see</i> the sender. No glow = unverifiable.
     </div>
-    <div class="btn" id="startBtn">ENTER THE THRESHOLD</div>
+    <div class="btn" id="startBtn">ENTER THE WHISPERS</div>
     <div style="margin-top:16px;font-size:11px;color:var(--ink-dim);letter-spacing:1px;">
       first time in a world with no straight lines?
       <a href="hyperbolic-spike.html" style="color:var(--trust-amber);text-decoration:none;border-bottom:1px dotted var(--untrust-dim);pointer-events:auto;">get your sea legs →</a>
@@ -186,7 +186,7 @@
 <script>
 "use strict";
 /* ============================================================
-   THRESHOLD — game logic
+   WHISPERS — game logic
    ============================================================ */
 
 const V3 = THREE.Vector3;
@@ -627,7 +627,7 @@ function buildPlayer() {
    walk / run [shift] / jump [space] / grab [G], graceful capsule fallback.
    ============================================================ */
 function loadPlayerModel() {
-  if (!THREE.GLTFLoader) { console.warn("[THRESHOLD] GLTFLoader missing — keeping capsule."); return; }
+  if (!THREE.GLTFLoader) { console.warn("[WHISPERS] GLTFLoader missing — keeping capsule."); return; }
   const loader = new THREE.GLTFLoader();
   loader.load(ROBOT_GLB, (gltf) => {
     playerModel = gltf.scene;
@@ -649,7 +649,7 @@ function loadPlayerModel() {
     if (currentAction) currentAction.play();
     mixer.addEventListener("finished", () => { ONESHOT.active = false; ONESHOT.name = null; });
     sysMsg("a body coalesces around you — run [shift], leap [space], reach [G].");
-  }, undefined, (err) => { console.warn("[THRESHOLD] RobotExpressive load failed, keeping capsule:", err); });
+  }, undefined, (err) => { console.warn("[WHISPERS] RobotExpressive load failed, keeping capsule:", err); });
 }
 
 function fadeToAction(name, dur) {
@@ -1551,8 +1551,8 @@ function handleInteract() {
 }
 
 function openExit() {
-  sysMsg("the convergence blazes. the threshold is OPEN. step through it.");
-  document.getElementById("topsub").textContent = "the threshold is open — escape now";
+  sysMsg("the convergence blazes. the way is OPEN. step through it.");
+  document.getElementById("topsub").textContent = "the way is open — escape now";
   let o = 0;
   const fade = setInterval(() => { o += 0.05; exitGate.material.opacity = Math.min(0.85, o); if (o >= 0.85) clearInterval(fade); }, 40);
   state.exitOpen = true;
@@ -1635,7 +1635,7 @@ function updatePlayer(dt) {
   }
   camera.lookAt(state.pos.x + fwd.x * 2, 1.4, state.pos.z + fwd.z * 2);
 
-  // win check: reach the open threshold
+  // win check: reach the open way
   if (state.exitOpen && state.pos.distanceTo(new V3(0, 0, 4)) < 2.4) {
     endGame(true, "You crossed back. All three anchors held. Whatever wore your friends' voices is still down there — but you are out, together.");
   }
@@ -1904,7 +1904,7 @@ function fatal(msg) {
   if (sub) sub.textContent = msg;
   const sb = document.querySelector("#start .tag");
   if (sb) sb.innerHTML = `<b style="color:#ff2f44">${msg}</b><br><br>` + sb.innerHTML;
-  console.error("[THRESHOLD]", msg);
+  console.error("[WHISPERS]", msg);
 }
 
 window.addEventListener("load", () => {

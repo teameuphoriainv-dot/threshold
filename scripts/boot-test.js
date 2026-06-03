@@ -1,4 +1,4 @@
-// Runtime smoke test for THRESHOLD boot path.
+// Runtime smoke test for WHISPERS boot path.
 // Stubs only the Three.js r128 surface that REALLY exists (CapsuleGeometry intentionally
 // absent, exactly like r128) so the original `new THREE.CapsuleGeometry` bug would re-throw.
 const fs = require("fs");
@@ -94,12 +94,12 @@ try {
   loadHandler();                         // -> buildWorld() + loop() (running=false)
   const startBtn = elements["startBtn"];
   if (!startBtn || !startBtn._handlers.click) throw new Error("START BUTTON HANDLER NOT ATTACHED (the reported bug)");
-  startBtn._handlers.click();            // simulate "ENTER THE THRESHOLD" (sets running=true)
+  startBtn._handlers.click();            // simulate "ENTER THE WHISPERS" (sets running=true)
   // drive a few live frames so updatePlayer/updatePlayerAnim/updatePortals/drawMinimap actually run
   for (const code of ["KeyW", "ShiftLeft", "Space", "KeyG", "ArrowLeft"]) sandbox.keys && (sandbox.keys[code] = true);
   let frames = 0;
   for (let i = 0; i < 5 && sandbox._rafCb; i++) { sandbox._rafCb(); frames++; }
-  console.log("PASS: world built, ENTER THE THRESHOLD fired, " + frames + " live frames ran (movement+anim+minimap exercised) with no throw");
+  console.log("PASS: world built, ENTER THE WHISPERS fired, " + frames + " live frames ran (movement+anim+minimap exercised) with no throw");
 } catch (e) {
   console.log("FAIL: " + e.message);
   process.exit(1);
