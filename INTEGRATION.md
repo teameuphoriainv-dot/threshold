@@ -5,7 +5,11 @@
 
 ## The one constraint that dictates everything
 
-**SpacetimeDB modules run in WASM and cannot make outbound HTTP calls.** So the LLM can never be called from inside a reducer. The Warden is therefore a **separate privileged Node.js client** that subscribes to game state, calls Claude over HTTP, and writes results back as reducer calls. This is the canonical SpacetimeDB pattern for external integrations — and per the organizers it's a *point in our favor* (shows we understand the platform).
+> **⚠️ Verified correction to the PRD (research pass, SpacetimeDB v2.0):** The PRD says modules are WASM and "cannot make outbound HTTP." That's **partly outdated**. TypeScript server modules are **GA in v2.0**, run on a **V8 runtime (not WASM)**, and v2.0 adds **procedure functions with real HTTP egress**. So the platform is no longer a hard wall.
+
+**Reducers still cannot make network calls** — they must stay deterministic (they also get a fresh execution environment per call, so no module-global state). The LLM therefore can't live in a reducer. The Warden stays a **separate privileged Node.js client**: it's the cleanest home for a long-running 10–15s async tick with its own profile state, and it keeps LLM latency entirely off the DB's deterministic path. (You *could* now use a v2.0 procedure function for egress, but a dedicated client is simpler and matches the demo.) Either way it shows we understand the platform.
+
+**Maturity note:** TS modules use a **builder API** (`schema()`, `table()`, `t.*()` from `spacetimedb/server`) — *not* decorators (those are the client SDK). They're GA but Rust is still the more battle-tested path; pick TS for team velocity, know the trade.
 
 ## Three processes
 
@@ -42,8 +46,12 @@
 
 In the slice, `forged` is a client-side DOM property (`index.html` `pushChat`) — exploitable. In the real build it must be **invisible to player clients**. Two options, in order of preference:
 
-- **A — Separate RLS table (most portable).** Keep `chat_messages` rows identical for everyone. Put the secret in `forged_flags(message_id)` and apply **row-level security** so only the Warden's identity can subscribe to it. Player clients literally never receive the flag. Scoring/auditing happens Warden-side.
-- **B — Column-filtered subscriptions.** If the current SpacetimeDB version supports per-subscription column projection / RLS that can hide a column, players subscribe to a query that omits `forged`. (Confirm support level — this is one of the things the research pass is verifying.)
+> **Verified (research pass):** SpacetimeDB has **no column-level visibility** on public tables — access control is *table-granular* (a table is `public: true` or server-only). So you cannot just mark one column secret. Two idiomatic patterns:
+
+- **A — Private table + public view (the canonical idiom).** Keep the full row (with `forged`) in a **private** table the Warden writes. Expose a **public view** that projects only the safe columns (sender, name, color, text, timestamp) — never `forged`. Player clients subscribe to the view and literally never receive the flag. Views are read-only and index-lookup-only. This is the recommended approach.
+- **B — Twin tables.** Identical `chat_messages` rows for everyone (public), plus a private `forged_flags(message_id)` only the Warden reads. Simpler to reason about; one extra write per forged message.
+
+Either way, `forged` is **set server-side only** — make the column unsettable from client input (the client `send_chat` reducer never accepts a forged arg; only the privileged `warden_mimic` path sets it).
 
 ## Linguistic profile (what makes the voice convincing)
 
