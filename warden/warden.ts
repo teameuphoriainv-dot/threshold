@@ -108,33 +108,50 @@ async function decide() {
   }
 }
 
-console.log(`[warden] connecting to ${URI} / ${DB} …`);
-DbConnection.builder()
-  .withUri(URI)
-  .withDatabaseName(DB)
-  .onConnect((c: any, identity: any) => {
-    conn = c;
-    myIdHex = hx(identity);
-    console.log("[warden] connected as", myIdHex.slice(0, 12) + "…");
-    c.db.player.onInsert((_ctx: any, row: any) => upPlayer(row));
-    c.db.player.onUpdate((_ctx: any, _old: any, row: any) => upPlayer(row));
-    c.db.player.onDelete((_ctx: any, row: any) => players.delete(hx(row.identity)));
-    c.db.chat_message.onInsert((_ctx: any, row: any) => {
-      const k = hx(row.sender);
-      const arr = profiles.get(k) || [];
-      arr.push(row.text);
-      while (arr.length > 10) arr.shift();
-      profiles.set(k, arr);
-    });
-    c.subscriptionBuilder()
-      .onApplied(() => {
-        console.log("[warden] subscribed; claiming the throne…");
-        c.reducers.claimWarden({});
-      })
-      .subscribe(["SELECT * FROM player", "SELECT * FROM chat_message", "SELECT * FROM warden_state"]);
-  })
-  .onConnectError((_ctx: any, e: any) => console.error("[warden] connect error:", e?.message || e))
-  .onDisconnect(() => console.log("[warden] disconnected"))
-  .build();
+// Resilience: reconnect on drop, re-claim on each (re)connect, heartbeat every tick
+// so a crashed Warden's claim goes stale (module side) and a fresh process takes over.
+let reconnecting = false;
+function scheduleReconnect() {
+  if (reconnecting) return;
+  reconnecting = true;
+  conn = null;
+  setTimeout(() => { reconnecting = false; connect(); }, 3000);
+}
 
-setInterval(() => { decide().catch((e) => console.error("[warden] decide error:", e?.message || e)); }, TICK_MS);
+function connect() {
+  console.log(`[warden] connecting to ${URI} / ${DB} …`);
+  DbConnection.builder()
+    .withUri(URI)
+    .withDatabaseName(DB)
+    .onConnect((c: any, identity: any) => {
+      conn = c;
+      myIdHex = hx(identity);
+      console.log("[warden] connected as", myIdHex.slice(0, 12) + "…");
+      c.db.player.onInsert((_ctx: any, row: any) => upPlayer(row));
+      c.db.player.onUpdate((_ctx: any, _old: any, row: any) => upPlayer(row));
+      c.db.player.onDelete((_ctx: any, row: any) => players.delete(hx(row.identity)));
+      c.db.chat_message.onInsert((_ctx: any, row: any) => {
+        const k = hx(row.sender);
+        const arr = profiles.get(k) || [];
+        arr.push(row.text);
+        while (arr.length > 10) arr.shift();
+        profiles.set(k, arr);
+      });
+      c.subscriptionBuilder()
+        .onApplied(() => {
+          console.log("[warden] subscribed; claiming the throne…");
+          c.reducers.claimWarden({});
+        })
+        .subscribe(["SELECT * FROM player", "SELECT * FROM chat_message", "SELECT * FROM warden_state"]);
+    })
+    .onConnectError((_ctx: any, e: any) => { console.error("[warden] connect error:", e?.message || e); scheduleReconnect(); })
+    .onDisconnect(() => { console.log("[warden] disconnected — reconnecting…"); scheduleReconnect(); })
+    .build();
+}
+
+connect();
+
+setInterval(() => {
+  if (conn) { try { conn.reducers.wardenHeartbeat({}); } catch { /* mid-reconnect */ } }
+  decide().catch((e) => console.error("[warden] decide error:", e?.message || e));
+}, TICK_MS);

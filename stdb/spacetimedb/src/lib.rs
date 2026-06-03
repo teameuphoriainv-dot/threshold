@@ -338,12 +338,30 @@ pub fn rescue(ctx: &ReducerContext, tether_id: u64) {
 //  WARDEN (privileged client) REDUCERS
 // ============================================================
 
+// If the live Warden hasn't heartbeat in this long, its claim is considered dead
+// and another Warden process may take over. Makes the adversary self-healing.
+const WARDEN_STALE_MICROS: i64 = 30_000_000; // 30s
+
 #[spacetimedb::reducer]
 pub fn claim_warden(ctx: &ReducerContext) {
     if let Some(w) = ctx.db.warden_state().id().find(0) {
-        if w.warden_identity.is_none() {
-            ctx.db.warden_state().id().update(WardenState { warden_identity: Some(ctx.sender()), ..w });
+        let age = ctx.timestamp.to_micros_since_unix_epoch() - w.last_action_at.to_micros_since_unix_epoch();
+        let stale = age > WARDEN_STALE_MICROS;
+        if w.warden_identity.is_none() || w.warden_identity == Some(ctx.sender()) || stale {
+            ctx.db.warden_state().id().update(WardenState {
+                warden_identity: Some(ctx.sender()), last_action_at: ctx.timestamp, ..w
+            });
             log::info!("Warden identity claimed");
+        }
+    }
+}
+
+/// The live Warden bumps this every tick so its claim doesn't go stale.
+#[spacetimedb::reducer]
+pub fn warden_heartbeat(ctx: &ReducerContext) {
+    if let Some(w) = ctx.db.warden_state().id().find(0) {
+        if w.warden_identity == Some(ctx.sender()) {
+            ctx.db.warden_state().id().update(WardenState { last_action_at: ctx.timestamp, ..w });
         }
     }
 }

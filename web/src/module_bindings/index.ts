@@ -46,6 +46,7 @@ import SetNameReducer from "./set_name_reducer";
 import SpawnLureReducer from "./spawn_lure_reducer";
 import StartMatchReducer from "./start_match_reducer";
 import WardenActReducer from "./warden_act_reducer";
+import WardenHeartbeatReducer from "./warden_heartbeat_reducer";
 import WardenMimicReducer from "./warden_mimic_reducer";
 
 // Import all procedure arg schemas
@@ -198,6 +199,7 @@ const reducersSchema = __reducers(
   __reducerSchema("spawn_lure", SpawnLureReducer),
   __reducerSchema("start_match", StartMatchReducer),
   __reducerSchema("warden_act", WardenActReducer),
+  __reducerSchema("warden_heartbeat", WardenHeartbeatReducer),
   __reducerSchema("warden_mimic", WardenMimicReducer),
 );
 

@@ -18,6 +18,7 @@ import SetNameReducer from "../set_name_reducer";
 import SpawnLureReducer from "../spawn_lure_reducer";
 import StartMatchReducer from "../start_match_reducer";
 import WardenActReducer from "../warden_act_reducer";
+import WardenHeartbeatReducer from "../warden_heartbeat_reducer";
 import WardenMimicReducer from "../warden_mimic_reducer";
 
 export type AbsorbParams = __Infer<typeof AbsorbReducer>;
@@ -32,5 +33,6 @@ export type SetNameParams = __Infer<typeof SetNameReducer>;
 export type SpawnLureParams = __Infer<typeof SpawnLureReducer>;
 export type StartMatchParams = __Infer<typeof StartMatchReducer>;
 export type WardenActParams = __Infer<typeof WardenActReducer>;
+export type WardenHeartbeatParams = __Infer<typeof WardenHeartbeatReducer>;
 export type WardenMimicParams = __Infer<typeof WardenMimicReducer>;
 
