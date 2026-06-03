@@ -17,7 +17,17 @@ python3 -m http.server 8000
 # then open http://localhost:8000/index.html
 ```
 
-**Controls:** `W A S D` move · `← →` / `J L` turn · `Shift` run · `Space` jump · `G` grab · `E` pick up / place anchor.
+### Play together (multiplayer)
+
+A hybrid WebSocket relay lets multiple people join the same world right now (reducer-shaped messages → maps onto SpacetimeDB later). In a second terminal:
+
+```bash
+cd server && npm install && npm start      # relay on ws://localhost:8787
+```
+
+Then each player opens `http://<host>:8000/index.html` — the client auto-connects, real players replace the bots, and you see each other (warm glow = in sight). The **Warden's voice runs server-side**: it forges chat stamped with a teammate's name; only line-of-sight exposes it. Same machine = open multiple tabs; same network = share the host's LAN IP. No relay running? The game falls back to the single-player bot slice automatically.
+
+**Controls:** `W A S D` move · **mouse** (click to look) / `← →` / `J L` turn · `Shift` run · `Space` jump · `G` grab · `E` pick up / place / rescue · **chat box** (Enter to send).
 
 **Verify a change didn't break the boot:** `node scripts/boot-test.js index.html` — an r128-accurate Three.js stub that builds the world, runs live frames, and simulates the start button, catching runtime errors without a browser. Run it after edits.
 

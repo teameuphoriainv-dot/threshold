@@ -3,3 +3,4 @@ node_modules/
 .claude-flow/
 
 ruvector.db
+server/node_modules/

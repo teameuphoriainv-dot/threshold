@@ -12,13 +12,18 @@ The repo is **one 1261-line vanilla Three.js r128 single-file slice** (`index.ht
 |---|---|---|---|
 | **SpacetimeDB** | "the nervous system… remove it and there is no game" (§2.2) | zero. Only `>>> SPACETIME` comment markers | Grand + "meaningfully used" |
 | **LLM adversary** | live linguistic profiles + few-shot forged text + JSON decision loop (§5.2, §6.2) | 5 hardcoded strings, local RNG | **Best Use of LLMs** |
-| **Real multiplayer** | 3–4 real players (§4.1) | local bots only (`index.html:410`) | Grand + Best Web App |
+| **Real multiplayer** | 3–4 real players (§4.1) | ✅ **WORKING (hybrid WS relay)** — see below | transport-swap to SpacetimeDB pending for the prize |
 
 Everything else is polish on top of a spine that doesn't exist yet. Build the spine first.
 
 ---
 
 ## 🔴 TIER 0 — Existential (no prize without these)
+
+### 0.5 Multiplayer — ✅ WORKING (hybrid relay; SpacetimeDB swap is the remaining prize step)
+- **Shipped:** `server/server.js` — a tiny `ws` relay with **reducer-shaped messages** (`move`/`chat`/`state`) so the migration to SpacetimeDB is a transport swap, not a redesign. Client (`NET` in `index.html`) auto-connects on start; real players replace bots, render in-world, sync at ~15 Hz; chat input added; **line-of-sight verification works per-viewer across the network.**
+- **The Warden's voice lives server-side** (like the future privileged client): it forges chat rows stamped with a real player's identity; `forged` truth is server-only (never on the wire). **Verified with two real browsers**: each saw the other in the roster, and forged "Mara" messages correctly showed `? UNVERIFIED` to the player who couldn't see Mara — the §14 demo beat, networked.
+- **Remaining for the prize:** swap the WS transport for SpacetimeDB tables/reducers per `INTEGRATION.md` (the message types already line up). Anchor/absorption state sync + a single authoritative Warden are the next networked pieces.
 
 ### 0.1 SpacetimeDB integration is missing entirely
 - **Evidence:** `index.html:407` and `:677` only contain `>>> SPACETIME` markers. `bots[]` (`:410`) are local waypoint-walkers; `state.pos` (`:198`) is written directly, never synced.
