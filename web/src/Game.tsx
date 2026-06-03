@@ -7,6 +7,8 @@ import { tables, reducers, type Player, type ChatMessage } from "./spacetime";
 import { WALLS, collide, canSee, PLAYER_R } from "./world";
 import { type Self, idHex } from "./helpers";
 import { Anchors, Tethers, InteractionLayer, PromptOverlay, Minimap } from "./Gameplay";
+import { useWardenActions, WardenEntity, FXOverlays } from "./WardenFX";
+import { Vines } from "./Vines";
 
 // ---------- keyboard ----------
 const keys: Record<string, boolean> = {};
@@ -63,6 +65,7 @@ function World() {
           <meshStandardMaterial color={0x20222b} roughness={0.9} metalness={0.1} emissive={0x0c0306} />
         </mesh>
       ))}
+      <Vines />
       {/* crimson convergence ring */}
       <mesh position={[0, 0.2, 4]} rotation-x={Math.PI / 2}>
         <torusGeometry args={[3.2, 0.18, 12, 48]} />
@@ -194,6 +197,7 @@ function Scene({ self, players, myId, onMove, anchors, tethers, pickup, place, r
       <RemotePlayers players={players} myId={myId} self={self} />
       <Anchors anchors={anchors} myId={myId} self={self} />
       <Tethers tethers={tethers} />
+      <WardenEntity self={self} />
       <InteractionLayer anchors={anchors} tethers={tethers} players={players} myId={myId} self={self}
         pickup={pickup} place={place} rescue={rescue} />
       <EffectComposer>
@@ -307,6 +311,7 @@ export function Game() {
   const pickup = useReducer(reducers.pickupAnchor);
   const place = useReducer(reducers.placeAnchor);
   const rescue = useReducer(reducers.rescue);
+  useWardenActions(selfRef.current);   // fire screen FX from the warden_action table
 
   const [started, setStarted] = useState(false);
   const match = matchRows[0];
@@ -348,6 +353,7 @@ export function Game() {
       <Minimap anchors={anchors} tethers={tethers} players={players} myId={myId} self={selfRef.current} />
       <Chat chat={chat} players={players} myId={myId} self={selfRef.current} sendChat={(t) => void sendChat({ text: t })} />
       <PromptOverlay />
+      <FXOverlays />
       <div id="vignette" />
     </>
   );

@@ -53,8 +53,8 @@ const ACTION_TOOL = {
     type: "object" as const,
     required: ["action"],
     properties: {
-      action: { type: "string", enum: ["MIMIC", "ABSORB", "WAIT"] },
-      target_name: { type: "string", description: "the player to mimic or absorb" },
+      action: { type: "string", enum: ["MIMIC", "ABSORB", "DISTORT", "MANIFEST", "WAIT"] },
+      target_name: { type: "string", description: "the player to mimic, absorb, or haunt" },
       forged_text: { type: "string", description: "if MIMIC: the message, in the target's voice, matching their casing/punctuation/slang" },
       reason: { type: "string", description: "one short line of intent" },
     },
@@ -100,6 +100,9 @@ async function decide() {
   } else if (input.action === "ABSORB" && victim) {
     await conn.reducers.absorb({ victim: victim.identity });
     console.log(`[warden] ABSORB ${victim.name}  (${input.reason || ""})`);
+  } else if (input.action === "DISTORT" || input.action === "MANIFEST") {
+    await conn.reducers.wardenAct({ actionType: input.action, target: victim?.name || "", roomId: 0n, energy: 3, phase: 2 });
+    console.log(`[warden] ${input.action} near ${victim?.name || "?"}  (${input.reason || ""})`);
   } else {
     console.log(`[warden] WAIT  (${input.reason || "biding"})`);
   }
