@@ -48,26 +48,26 @@ Everything else is polish on top of a spine that doesn't exist yet. Build the sp
 
 ## 🟡 TIER 1 — Core game-loop gaps (PRD §4–5)
 
-### 1.1 Absorption → void → rescue loop absent
-- **Evidence:** `absorb()` (`index.html:864`) immediately `endGame(false, …)`.
-- **PRD §5.4:** absorbed player enters the void, **can still chat, and the Warden can now speak as them**; teammates rescue via a "tether" object. This enables demo-script step 6 (§14) — "the Warden chats Judge B *as Judge A*." Without it, the single scariest beat is impossible.
-- **Fix:** absorbed state (`players.state = absorbed`), void chat channel, Warden gains mimic rights over absorbed players, `tether` interactable + `rescue` reducer.
+### 1.1 Absorption → void → rescue loop — ✅ DONE (slice, adapted for bots)
+- **Was:** `absorb()` immediately ended the game.
+- **Fix shipped:** the Warden's new `ABSORB` action pulls a hidden teammate into the void (`absorbBot`): body vanishes, a **tether** mesh is left behind, roster shows `✶ ABSORBED`, minimap hides their live dot and shows a pulsing tether. The absorbed teammate's voice becomes **full Warden bait** (new `BAIT` action + `forgeBait` rescue-lure lines — the §14 step-6 beat: *"i'm fine, found the exit, come here"*). Player rescues by reaching the tether + `E` (`rescueBot`). All-absorbed escalates dread.
+- **Note:** player-absorb (manifest contact) stays a loss — single-player slice has no one to rescue the human. Real void-chat for the human needs Tier-0 multiplayer.
 
 ### 1.2 No fake anchors / lures — ✅ DONE (slice)
 - **Was:** `buildAnchors()` spawned 3 all-`real:true`.
 - **Fix shipped:** one `real:false` anchor at `(12,-18)`, visually identical (same `makeAnchorMesh`). Reveal-on-place (core goes dark) + trauma/glitch. Still TODO: dynamic `SPAWN_LURE` action driven by the Warden (§6.3) rather than a fixed spawn.
 
-### 1.3 Warden action set incomplete
-- **Have:** MIMIC, DISTORT, RESHAPE, MANIFEST (`index.html:794-797`).
-- **Missing (§6.3):** `SEAL_CORRIDOR` (the `room_exits.sealed` column exists in the PRD schema but no seal logic), `SPAWN_LURE`, `REVEAL_FALSE`, `CORRUPT_ITEM`.
+### 1.3 Warden action set — ✅ DONE (slice)
+- **Was:** MIMIC, DISTORT, RESHAPE, MANIFEST.
+- **Fix shipped — full §6.3 set:** `SEAL_CORRIDOR` (`sealCorridor` — temp wall across a corridor mouth, one at a time, never the mouth you're in, auto-dissolves → PRD 6.5 never-zero-exit), `SPAWN_LURE` (`spawnLure` — dynamic fake anchor out of sight, capped at 3), `REVEAL_FALSE` (`revealFalse` — false anchor blip on minimap + directional whisper), `CORRUPT_ITEM` (`corruptItem` — relocates an unseen loose anchor; "changes where it leads" while staying winnable), plus `ABSORB`/`BAIT` (1.1). All energy-gated by phase, refund on no-op.
 
 ### 1.4 Loss conditions incomplete
 - **Have:** time-out (`:1173`), manifest-contact (`:860`), **fake-anchor-converged ✅ (new, §4.2).**
 - **Still missing (§4.2):** all-players-absorbed (depends on 1.1 void/rescue).
 
-### 1.5 Coordination puzzles missing
+### 1.5 Coordination puzzles missing — ⏸ DEFERRED (needs Tier-0 multiplayer)
 - **PRD §4.3:** "some convergence steps require 2+ players acting simultaneously in different rooms."
-- **Evidence:** none exist. This is the mechanic that *forces* splitting → makes mimicry bite. Without it, optimal play is "never split," which defeats the whole design.
+- **Why deferred:** a real 2-player-simultaneous puzzle is meaningless against wandering bots — it only bites when two *humans* must trust compromised chat to sync. Build it the moment real players land (Tier 0). Until then, `SEAL_CORRIDOR` + `ABSORB` already pressure the party apart.
 
 ### 1.6 Mimicry frequency not capped — ✅ DONE
 - **Was:** `wardenStep()` gated only on the global 10–15s tick + energy; no per-victim cooldown.

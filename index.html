@@ -446,6 +446,7 @@ function buildBots() {
       id: "bot" + i, name: d.name, color: d.color, colorHex: "#" + d.color.toString(16).padStart(6, "0"),
       mesh: g, glow, pos: d.start.clone(), target: pickWaypoint(), visible: false, lastChat: 4 + i * 3,
       mimicCd: 0,   // PRD 6.5: per-victim cooldown so chat never becomes 100% forged noise
+      absorbed: false, tether: null, baitCd: 0,   // PRD 5.4: void state + rescue tether
     });
   });
 }
@@ -647,6 +648,98 @@ function reshapeRoom() {
   return true;
 }
 
+/* ---- SEAL_CORRIDOR (PRD 6.3) — raise a temporary wall blocking ONE corridor mouth.
+   Fairness (PRD 6.5): only one seal at a time, never the mouth the player is standing in,
+   auto-dissolves after a window so no one is ever sealed in with zero exits. ---- */
+const SEAL_SLOTS = [
+  { x: 0, z: -16, w: 10, d: 1 },    // north room mouth
+  { x: -22, z: 4, w: 1, d: 10 },    // west room mouth
+  { x: 22, z: 4, w: 1, d: 10 },     // east room mouth
+];
+let activeSeal = null;
+function sealCorridor() {
+  if (activeSeal) return false;
+  const cand = SEAL_SLOTS.filter(s => Math.hypot(s.x - state.pos.x, s.z - state.pos.z) > 6 && !playerCanSee(new V3(s.x, 1.5, s.z)));
+  if (!cand.length) return false;
+  const s = cand[Math.floor(Math.random() * cand.length)];
+  const idx = walls.length;
+  walls.push({ x: s.x, z: s.z, w: s.w, d: s.d });
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(s.w, 9, s.d),
+    new THREE.MeshStandardMaterial({ color: 0x180608, emissive: 0x5a0a12, emissiveIntensity: 0.7, roughness: 1, transparent: true, opacity: 0 }));
+  mesh.position.set(s.x, 4.5, s.z);
+  scene.add(mesh); wallMeshes.push(mesh);
+  activeSeal = { idx, mesh, t: 13, fade: 0 };
+  addTrauma(0.25);
+  sysMsg("flesh slammed shut across a corridor. it won't hold forever.");
+  return true;
+}
+function tickSeal(dt) {
+  if (!activeSeal) return;
+  activeSeal.t -= dt;
+  // grow in, then dissolve out
+  activeSeal.fade = Math.min(1, activeSeal.fade + dt * 2);
+  const o = activeSeal.t < 2 ? Math.max(0, activeSeal.t / 2) : activeSeal.fade;
+  activeSeal.mesh.material.opacity = o * 0.95;
+  if (activeSeal.t <= 0) {
+    scene.remove(activeSeal.mesh);
+    walls.splice(activeSeal.idx, 1);           // remove footprint (added last, safe index)
+    const mi = wallMeshes.indexOf(activeSeal.mesh); if (mi >= 0) wallMeshes.splice(mi, 1);
+    activeSeal = null;
+  }
+}
+
+/* ---- REVEAL_FALSE (PRD 6.3) — a false clue. A fake anchor-bright pulse on the minimap
+   at a spot where nothing is, plus a plausible directional whisper. ---- */
+let falseBlip = null;
+function revealFalse() {
+  const x = (Math.random() - 0.5) * 70, z = (Math.random() - 0.5) * 60;
+  falseBlip = { x, z, t: 7 };
+  const dir = z < state.pos.z ? "north" : "south";
+  sysMsg(`a pulse, anchor-bright, somewhere to the ${dir}. or something wants you to think so.`);
+}
+
+/* ---- SPAWN_LURE (PRD 6.3) — drop a fresh fake anchor in a spot you can't see. ---- */
+function spawnLure() {
+  const fakes = anchors.filter(a => !a.real && !a.placed);
+  if (fakes.length >= 3) return false;
+  const spot = randomHiddenSpot();
+  if (!spot) return false;
+  const mesh = makeAnchorMesh(false);
+  mesh.position.copy(spot);
+  scene.add(mesh);
+  anchors.push({ id: "lure" + anchors.length, mesh, real: false, placed: false, carriedBy: null, pos: spot.clone() });
+  sysMsg("something new is glowing in the dark. it looks like the others.");
+  return true;
+}
+
+/* ---- CORRUPT_ITEM (PRD 6.3) — "change where it leads": relocate an unseen, loose anchor.
+   Stays winnable (real anchors are never destroyed, only moved). ---- */
+function corruptItem() {
+  const cand = anchors.filter(a => !a.placed && a !== state.carrying && a.carriedBy == null && !playerCanSee(a.pos));
+  if (!cand.length) return false;
+  const a = cand[Math.floor(Math.random() * cand.length)];
+  const spot = randomHiddenSpot();
+  if (!spot) return false;
+  a.pos.copy(spot); a.mesh.position.copy(spot);
+  distortT = 0.8; addTrauma(0.2);
+  sysMsg("an anchor is no longer where you left it.");
+  return true;
+}
+
+// a point inside the arena the player cannot currently see, nudged out of walls
+function randomHiddenSpot() {
+  for (let i = 0; i < 24; i++) {
+    const x = (Math.random() - 0.5) * 72, z = (Math.random() - 0.5) * 62;
+    const p = new V3(x, 0.9, z);
+    if (playerCanSee(p)) continue;
+    const [cx, cz] = collide(x, z, PLAYER_R);
+    if (Math.hypot(cx - x, cz - z) > 0.01) continue;   // landed in a wall — reject
+    if (Math.hypot(x - state.pos.x, z - state.pos.z) < 8) continue;
+    return new V3(cx, 0.9, cz);
+  }
+  return null;
+}
+
 /* ============================================================
    GEOMETRY HELPERS — collision + line of sight
    ============================================================ */
@@ -703,6 +796,12 @@ function pickWaypoint() {
 
 function updateBots(dt) {
   for (const b of bots) {
+    b.baitCd = Math.max(0, b.baitCd - dt);
+    if (b.absorbed) {                 // PRD 5.4: in the void — no body in the world, only a voice
+      b.visible = false;
+      if (b.tether) { b.tether.userData.core.rotation.y += dt * 1.6; b.tether.position.y = 1.1 + Math.sin(performance.now() * 0.003) * 0.2; }
+      continue;
+    }
     const to = new V3().subVectors(b.target, b.pos);
     to.y = 0;
     if (to.length() < 1.5) { b.target = pickWaypoint(); }
@@ -804,6 +903,8 @@ function wardenStep(dt) {
   warden.energy = Math.min(8, warden.energy + dt * (0.18 + state.phase * 0.12));
   warden.manifestCd = Math.max(0, warden.manifestCd - dt);
   for (const b of bots) b.mimicCd = Math.max(0, b.mimicCd - dt);   // PRD 6.5 mimicry cap
+  tickSeal(dt);                                                    // SEAL_CORRIDOR auto-dissolve
+  if (falseBlip) { falseBlip.t -= dt; if (falseBlip.t <= 0) falseBlip = null; }
 
   warden.tick -= dt;
   if (warden.tick > 0) return;
@@ -811,11 +912,19 @@ function wardenStep(dt) {
 
   // choose ONE action affordable now, weighted by phase
   const choices = [];
-  // PRD 6.5: only mimic an UNSEEN victim who is off cooldown — keeps signal > noise.
-  const hidden = bots.filter(b => !playerCanSee(b.pos) && b.mimicCd <= 0);
+  // PRD 6.5: only mimic an UNSEEN, non-absorbed victim who is off cooldown — keeps signal > noise.
+  const hidden = bots.filter(b => !b.absorbed && !playerCanSee(b.pos) && b.mimicCd <= 0);
+  const absorbable = bots.filter(b => !b.absorbed && !playerCanSee(b.pos));   // PRD 5.4 absorb target
+  const voiceable = bots.filter(b => b.absorbed && b.baitCd <= 0);            // absorbed = full-voice bait
   if (hidden.length && warden.energy >= 1) choices.push({ a: "MIMIC", cost: 1, w: 3 });
+  if (voiceable.length && warden.energy >= 1) choices.push({ a: "BAIT", cost: 1, w: 4 });
   if (warden.energy >= 1) choices.push({ a: "DISTORT", cost: 1, w: state.phase });
+  if (state.phase >= 2 && warden.energy >= 2) choices.push({ a: "SEAL", cost: 2, w: state.phase });
+  if (state.phase >= 2 && warden.energy >= 2) choices.push({ a: "REVEAL_FALSE", cost: 2, w: 2 });
+  if (state.phase >= 2 && warden.energy >= 2) choices.push({ a: "SPAWN_LURE", cost: 2, w: 2 });
   if (state.phase >= 2 && warden.energy >= 3) choices.push({ a: "RESHAPE", cost: 3, w: state.phase });
+  if (state.phase >= 3 && absorbable.length && warden.energy >= 4) choices.push({ a: "ABSORB", cost: 4, w: state.phase });
+  if (state.phase >= 3 && warden.energy >= 4) choices.push({ a: "CORRUPT_ITEM", cost: 4, w: 2 });
   if (state.phase >= 3 && warden.energy >= 4 && warden.manifestCd <= 0) choices.push({ a: "MANIFEST", cost: 4, w: 4 });
   if (!choices.length) return;
 
@@ -824,15 +933,30 @@ function wardenStep(dt) {
   for (const c of choices) { r -= c.w; if (r <= 0) { pick = c; break; } }
   warden.energy -= pick.cost;
 
+  const rand = arr => arr[Math.floor(Math.random() * arr.length)];
   if (pick.a === "MIMIC") {
-    const victim = hidden[Math.floor(Math.random() * hidden.length)];
+    const victim = rand(hidden);
     victim.mimicCd = 26 + Math.random() * 10;   // PRD 6.5: this voice is "spent" for a while
     // forged row stamped with victim identity/name/color (PRD 5.2)
     pushChat(victim.name, victim.colorHex, forgeLureText(victim), victim, true);
+  } else if (pick.a === "BAIT") {
+    const victim = rand(voiceable);              // PRD 5.4: absorbed teammate's voice = rescue bait
+    victim.baitCd = 16 + Math.random() * 10;
+    pushChat(victim.name, victim.colorHex, forgeBait(victim), victim, true);
   } else if (pick.a === "DISTORT") {
     distortPulse();
+  } else if (pick.a === "SEAL") {
+    if (!sealCorridor()) warden.energy += pick.cost;     // refund if nothing sealable
+  } else if (pick.a === "REVEAL_FALSE") {
+    revealFalse();
+  } else if (pick.a === "SPAWN_LURE") {
+    if (!spawnLure()) warden.energy += pick.cost;
   } else if (pick.a === "RESHAPE") {
     if (!reshapeRoom()) warden.energy += pick.cost;  // refund if nothing was out of view
+  } else if (pick.a === "ABSORB") {
+    absorbBot(rand(absorbable));
+  } else if (pick.a === "CORRUPT_ITEM") {
+    if (!corruptItem()) warden.energy += pick.cost;
   } else if (pick.a === "MANIFEST") {
     manifest();
     warden.manifestCd = 30;  // hard cooldown (PRD 6.5 fairness)
@@ -889,6 +1013,63 @@ function absorb() {
   endGame(false, "The Warden pulled you into the void. Your friends will hear your voice next — but it will not be you speaking.");
 }
 
+/* ---- PRD 5.4: the Warden absorbs a TEAMMATE into the void ----
+   The bot's body vanishes; a "tether" anchor-to-the-real-world is left behind.
+   Now EVERY message bearing that teammate's name is the Warden (full voice access) —
+   rescue bait. Reach the tether and interact [E] to pull them back. */
+function makeTetherMesh(pos) {
+  const g = new THREE.Group();
+  const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 1),
+    new THREE.MeshStandardMaterial({ color: 0x1a0307, emissive: 0x8a0d1c, emissiveIntensity: 1.3, roughness: 0.4, transparent: true, opacity: 0.82 }));
+  g.add(core);
+  const cage = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.05, 8, 24),
+    new THREE.MeshStandardMaterial({ color: 0x2a0810, emissive: 0xff2f44, emissiveIntensity: 0.9 }));
+  cage.rotation.x = Math.PI / 2;
+  g.add(cage);
+  g.add(new THREE.PointLight(0xff2f44, 1.1, 7, 2));
+  g.position.copy(pos); g.position.y = 1.1;
+  g.userData = { core, cage };
+  scene.add(g);
+  return g;
+}
+function absorbBot(b) {
+  if (b.absorbed) return;
+  b.absorbed = true;
+  b.mesh.visible = false;
+  b.glow.intensity = 0;
+  b.tether = makeTetherMesh(b.pos);
+  document.getElementById("flash").style.opacity = 0.45;
+  addTrauma(0.5);
+  // the void speaks in their voice immediately (the demo §14 beat)
+  b.baitCd = 0;
+  sysMsg(`${b.name} was pulled into the void. whatever speaks in their voice now is not them.`);
+  pushChat(b.name, b.colorHex, forgeBait(b), b, true);
+  if (bots.every(x => x.absorbed)) {
+    document.getElementById("danger").style.opacity = 0.6;
+    sysMsg("you are alone now. every voice you hear is the Warden's.");
+  }
+}
+function rescueBot(b) {
+  if (!b.absorbed) return;
+  b.absorbed = false;
+  if (b.tether) { scene.remove(b.tether); b.tether = null; }
+  // re-enter the world at the rescue point
+  b.pos.copy(state.pos); b.pos.x += Math.sin(state.yaw) * 2.2; b.pos.z += Math.cos(state.yaw) * 2.2;
+  b.mesh.position.copy(b.pos); b.mesh.visible = true;
+  b.target = pickWaypoint();
+  document.getElementById("flash").style.opacity = 0.4;
+  sysMsg(`you tore ${b.name} back out of the void. they're real again — for now.`);
+}
+// absorbed teammate's voice = rescue bait (PRD §14 step 6: "i'm fine, found the exit, come here")
+const BAIT_LINES = [
+  "i'm fine, i found the exit — come to me, hurry",
+  "it let me go, i'm safe over here, come quick",
+  "i can see the way out from here, just come to my voice",
+  "please come get me, i don't know how long i have",
+  "stop looking for anchors and come to me, i found a way",
+];
+function forgeBait(b) { return BAIT_LINES[Math.floor(Math.random() * BAIT_LINES.length)]; }
+
 /* ============================================================
    ANCHORS — pickup / carry / place
    ============================================================ */
@@ -906,8 +1087,15 @@ function updateAnchors(dt) {
     // placement prompt at convergence
     if (state.pos.distanceTo(new V3(0, 0, 4)) < PLACE_DIST) { canInteract = a; interactKind = "place"; interactEl.textContent = "[ E ] place anchor at convergence"; }
   } else {
-    // nearest pickup
-    for (const a of anchors) {
+    // rescue a tethered teammate takes priority (PRD 5.4)
+    for (const b of bots) {
+      if (!b.absorbed || !b.tether) continue;
+      if (state.pos.distanceTo(b.tether.position) < PICKUP_DIST) {
+        canInteract = b; interactKind = "rescue"; interactEl.textContent = `[ E ] pull ${b.name} from the void`; break;
+      }
+    }
+    // else nearest pickup
+    if (!canInteract) for (const a of anchors) {
       if (a.placed || a.carriedBy) continue;
       if (state.pos.distanceTo(a.pos) < PICKUP_DIST) { canInteract = a; interactKind = "pickup"; interactEl.textContent = "[ E ] pick up anchor"; break; }
     }
@@ -927,7 +1115,9 @@ function handleInteract() {
   if (!keys["KeyE"]) { interactLatch = false; return; }
   if (interactLatch || !canInteract) return;
   interactLatch = true;
-  if (interactKind === "pickup") {
+  if (interactKind === "rescue") {
+    rescueBot(canInteract);
+  } else if (interactKind === "pickup") {
     state.carrying = canInteract;
     canInteract.carriedBy = "player";
     sysMsg(`anchor secured. you move slower now — and the Warden knows you have it.`);
@@ -1049,8 +1239,9 @@ function updateRoster() {
   let html = `<div style="color:#9a7e84;margin-bottom:4px;letter-spacing:2px;">SURVIVORS</div>`;
   html += `<div class="who"><span><span class="dot" style="background:#ffb066"></span>You</span><span class="seen">self</span></div>`;
   for (const b of bots) {
-    const cls = b.visible ? "seen" : "unseen";
-    const tag = b.visible ? "in sight" : "unverified";
+    let cls, tag;
+    if (b.absorbed) { cls = "unseen"; tag = "✶ ABSORBED"; }     // PRD 5.4: in the void, voice unverifiable
+    else { cls = b.visible ? "seen" : "unseen"; tag = b.visible ? "in sight" : "unverified"; }
     html += `<div class="who"><span><span class="dot" style="background:${b.colorHex}"></span>${b.name}</span><span class="${cls}">${tag}</span></div>`;
   }
   el.innerHTML = html;
@@ -1123,8 +1314,24 @@ function drawMinimap() {
     else if (carried) miniDiamond(ax, ay, 4, "rgba(0,0,0,0)", MINI.crimsonDim);
     else miniDiamond(ax, ay, 4.5, MINI.crimson, "#ff9aa6");
   }
-  // teammates (ALWAYS LIVE); brighter + white ring when in sight
+  // tethers — where an absorbed teammate can be pulled back (PRD 5.4)
   for (const b of bots) {
+    if (!b.absorbed || !b.tether) continue;
+    const [tx, ty] = worldToMap(b.tether.position.x, b.tether.position.z);
+    const pulse = 3.5 + Math.sin(performance.now() * 0.006) * 1.5;
+    miniDot(tx, ty, pulse, "rgba(0,0,0,0)", "#ff2f44");
+    ctx.fillStyle = b.colorHex; ctx.font = "9px monospace"; ctx.fillText("✶", tx - 3, ty + 3);
+  }
+  // false clue blip (REVEAL_FALSE) — looks like an anchor, isn't one
+  if (falseBlip) {
+    const [fx, fy] = worldToMap(falseBlip.x, falseBlip.z);
+    ctx.globalAlpha = 0.4 + Math.abs(Math.sin(performance.now() * 0.008)) * 0.5;
+    miniDiamond(fx, fy, 4.5, MINI.crimson, "#ff9aa6");
+    ctx.globalAlpha = 1;
+  }
+  // teammates (LIVE only when NOT absorbed — the void hides them)
+  for (const b of bots) {
+    if (b.absorbed) continue;
     const [bx, by] = worldToMap(b.pos.x, b.pos.z);
     ctx.globalAlpha = b.visible ? 1 : 0.7;
     miniDot(bx, by, b.visible ? 4.5 : 3.5, b.colorHex, b.visible ? "#fff" : null);
