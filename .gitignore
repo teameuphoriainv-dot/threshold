@@ -4,3 +4,6 @@ node_modules/
 
 ruvector.db
 server/node_modules/
+
+# launchd warden runtime logs
+warden/*.log

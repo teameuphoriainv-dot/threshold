@@ -4,7 +4,8 @@ import { EffectComposer, Bloom, Vignette, ChromaticAberration } from "@react-thr
 import * as THREE from "three";
 import { useSpacetimeDB, useTable, useReducer } from "spacetimedb/react";
 import { tables, reducers, type Player, type ChatMessage } from "./spacetime";
-import { WALLS, collide, canSee, PLAYER_R } from "./world";
+import { collide, canSee, PLAYER_R } from "./world";
+import { Kit } from "./Kit";
 import { type Self, idHex } from "./helpers";
 import { Anchors, Tethers, InteractionLayer, PromptOverlay, Minimap } from "./Gameplay";
 import { useWardenActions, WardenEntity, FXOverlays } from "./WardenFX";
@@ -64,13 +65,8 @@ function World() {
         <planeGeometry args={[120, 120]} />
         <meshStandardMaterial color={0x14161c} roughness={1} />
       </mesh>
-      {/* walls */}
-      {WALLS.map((w, i) => (
-        <mesh key={i} position={[w.x, 4.5, w.z]}>
-          <boxGeometry args={[w.w, 9, w.d]} />
-          <meshStandardMaterial color={0x20222b} roughness={0.9} metalness={0.1} emissive={0x0c0306} />
-        </mesh>
-      ))}
+      {/* modular kit: walls (box fallback) + floor + pillars + props — drop /models/*.glb */}
+      <Kit />
       <Vines />
       {/* crimson convergence ring */}
       <mesh position={[0, 0.2, 4]} rotation-x={Math.PI / 2}>
