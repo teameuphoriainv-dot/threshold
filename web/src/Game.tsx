@@ -9,6 +9,7 @@ import { type Self, idHex } from "./helpers";
 import { Anchors, Tethers, InteractionLayer, PromptOverlay, Minimap } from "./Gameplay";
 import { useWardenActions, WardenEntity, FXOverlays } from "./WardenFX";
 import { Vines } from "./Vines";
+import { Portals } from "./Portals";
 
 // ---------- keyboard ----------
 const keys: Record<string, boolean> = {};
@@ -197,6 +198,7 @@ function Scene({ self, players, myId, onMove, anchors, tethers, pickup, place, r
       <RemotePlayers players={players} myId={myId} self={self} />
       <Anchors anchors={anchors} myId={myId} self={self} />
       <Tethers tethers={tethers} />
+      <Portals self={self} />
       <WardenEntity self={self} />
       <InteractionLayer anchors={anchors} tethers={tethers} players={players} myId={myId} self={self}
         pickup={pickup} place={place} rescue={rescue} />
