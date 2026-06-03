@@ -15,6 +15,11 @@ export interface ChatMessage {
   id: bigint; sender: Identityish; senderName: string; senderColor: number;
   text: string; roomId: bigint;
 }
+export interface Anchor {
+  id: bigint; kind: string; x: number; z: number; carriedBy?: Identityish; placed: boolean;
+}
+export interface Tether { id: bigint; absorbed: Identityish; x: number; z: number; }
+export interface WardenAction { id: bigint; actionType: string; target: string; createdAt: unknown; }
 
 // Defaults target Maincloud so a fresh clone connects with no setup.
 // Override with web/.env.local for local dev (see VITE_STDB_URI there).

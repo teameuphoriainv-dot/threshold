@@ -5,24 +5,20 @@ import * as THREE from "three";
 import { useSpacetimeDB, useTable, useReducer } from "spacetimedb/react";
 import { tables, reducers, type Player, type ChatMessage } from "./spacetime";
 import { WALLS, collide, canSee, PLAYER_R } from "./world";
-
-// ---------- shared mutable self (written by LocalPlayer, read by Chat/Hud for LOS) ----------
-type Self = { x: number; z: number; yaw: number };
+import { type Self, idHex } from "./helpers";
+import { Anchors, Tethers, InteractionLayer, PromptOverlay, Minimap } from "./Gameplay";
 
 // ---------- keyboard ----------
 const keys: Record<string, boolean> = {};
 function useKeyboard() {
   useEffect(() => {
     const isChat = () => document.activeElement?.id === "chatInput";
-    const dn = (e: KeyboardEvent) => { if (!isChat()) keys[e.code] = true; };
-    const up = (e: KeyboardEvent) => { if (!isChat()) keys[e.code] = false; };
+    const dn = (e: KeyboardEvent) => { if (!isChat()) { keys[e.code] = true; if (e.code === "KeyE") (window as { __keysE?: boolean }).__keysE = true; } };
+    const up = (e: KeyboardEvent) => { if (!isChat()) { keys[e.code] = false; if (e.code === "KeyE") (window as { __keysE?: boolean }).__keysE = false; } };
     addEventListener("keydown", dn); addEventListener("keyup", up);
     return () => { removeEventListener("keydown", dn); removeEventListener("keyup", up); };
   }, []);
 }
-
-const idHex = (id: { toHexString?: () => string } | undefined) =>
-  (id && typeof id.toHexString === "function" ? id.toHexString() : String(id ?? ""));
 
 // ============================================================
 //  WORLD — floor, ceiling, walls, fog, spores, crimson lights
@@ -183,7 +179,12 @@ function RemoteBody({ p, self }: { p: Player; self: Self }) {
 // ============================================================
 //  SCENE (inside Canvas)
 // ============================================================
-function Scene({ self, players, myId, onMove }: { self: Self; players: readonly Player[]; myId: string; onMove: (x: number, z: number, yaw: number) => void }) {
+type SceneProps = {
+  self: Self; players: readonly Player[]; myId: string; onMove: (x: number, z: number, yaw: number) => void;
+  anchors: readonly import("./spacetime").Anchor[]; tethers: readonly import("./spacetime").Tether[];
+  pickup: (id: bigint) => void; place: (id: bigint) => void; rescue: (id: bigint) => void;
+};
+function Scene({ self, players, myId, onMove, anchors, tethers, pickup, place, rescue }: SceneProps) {
   return (
     <>
       <fogExp2 attach="fog" args={[0x1c2129, 0.022]} />
@@ -191,6 +192,10 @@ function Scene({ self, players, myId, onMove }: { self: Self; players: readonly 
       <World />
       <LocalPlayer self={self} onMove={onMove} />
       <RemotePlayers players={players} myId={myId} self={self} />
+      <Anchors anchors={anchors} myId={myId} self={self} />
+      <Tethers tethers={tethers} />
+      <InteractionLayer anchors={anchors} tethers={tethers} players={players} myId={myId} self={self}
+        pickup={pickup} place={place} rescue={rescue} />
       <EffectComposer>
         <Bloom intensity={0.9} luminanceThreshold={0.5} luminanceSmoothing={0.4} mipmapBlur />
         <ChromaticAberration offset={[0.0006, 0.0006]} />
@@ -254,7 +259,7 @@ function Chat({ chat, players, myId, self, sendChat }: {
 // ============================================================
 //  HUD — roster with live trust state
 // ============================================================
-function Hud({ players, myId, self, anchorsPlaced }: { players: readonly Player[]; myId: string; self: Self; anchorsPlaced: number }) {
+function Hud({ players, myId, self, anchorsPlaced, exitOpen }: { players: readonly Player[]; myId: string; self: Self; anchorsPlaced: number; exitOpen: boolean }) {
   const [, force] = useState(0);
   useEffect(() => { const t = setInterval(() => force((n) => n + 1), 200); return () => clearInterval(t); }, []);
   const me = players.find((p) => idHex(p.identity) === myId);
@@ -262,7 +267,7 @@ function Hud({ players, myId, self, anchorsPlaced }: { players: readonly Player[
   return (
     <div id="hud">
       <div className="panel" id="anchors">ANCHORS<br /><span className="n">{anchorsPlaced}</span> / 3 secured</div>
-      <div className="panel" id="top"><div className="title">THRESHOLD</div><div className="sub">the world does not want you to leave</div></div>
+      <div className="panel" id="top"><div className="title">THRESHOLD</div><div className="sub" style={exitOpen ? { color: "#ff9a86" } : undefined}>{exitOpen ? "the threshold is OPEN — escape now" : "the world does not want you to leave"}</div></div>
       <div className="panel" id="roster">
         <div style={{ color: "#9a7e84", marginBottom: 4, letterSpacing: 2 }}>SURVIVORS</div>
         <div className="who"><span><span className="dot" style={{ background: "#ffb066" }} />{me?.name ?? "You"}</span><span className="seen">self</span></div>
@@ -293,10 +298,15 @@ export function Game() {
   const [players] = useTable(tables.player);
   const [chat] = useTable(tables.chat_message);
   const [matchRows] = useTable(tables.match_state);
+  const [anchors] = useTable(tables.anchor);
+  const [tethers] = useTable(tables.tether);
 
   const move = useReducer(reducers.movePlayer);
   const sendChat = useReducer(reducers.sendChat);
   const startMatch = useReducer(reducers.startMatch);
+  const pickup = useReducer(reducers.pickupAnchor);
+  const place = useReducer(reducers.placeAnchor);
+  const rescue = useReducer(reducers.rescue);
 
   const [started, setStarted] = useState(false);
   const match = matchRows[0];
@@ -324,13 +334,20 @@ export function Game() {
     );
   }
 
+  const exitOpen = match ? match.exitOpen : false;
   return (
     <>
       <Canvas camera={{ fov: 62, near: 0.1, far: 400, position: [0, 4.2, 32] }}>
-        <Scene self={selfRef.current} players={players} myId={myId} onMove={onMove} />
+        <Scene self={selfRef.current} players={players} myId={myId} onMove={onMove}
+          anchors={anchors} tethers={tethers}
+          pickup={(id) => void pickup({ anchorId: id })}
+          place={(id) => void place({ anchorId: id })}
+          rescue={(id) => void rescue({ tetherId: id })} />
       </Canvas>
-      <Hud players={players} myId={myId} self={selfRef.current} anchorsPlaced={anchorsPlaced} />
+      <Hud players={players} myId={myId} self={selfRef.current} anchorsPlaced={anchorsPlaced} exitOpen={exitOpen} />
+      <Minimap anchors={anchors} tethers={tethers} players={players} myId={myId} self={selfRef.current} />
       <Chat chat={chat} players={players} myId={myId} self={selfRef.current} sendChat={(t) => void sendChat({ text: t })} />
+      <PromptOverlay />
       <div id="vignette" />
     </>
   );

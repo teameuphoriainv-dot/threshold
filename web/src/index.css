@@ -27,6 +27,14 @@ canvas { display: block; }
 #roster .unseen { color: var(--untrust-dim); }
 #roster .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 
+#minimap { position: fixed; top: 86px; right: 16px; width: 170px; height: 170px; z-index: 9;
+  pointer-events: none; border: 1px solid rgba(190,30,45,0.45); border-radius: 6px;
+  background: rgba(10,4,6,0.66); box-shadow: 0 0 18px rgba(160,0,25,0.22), inset 0 0 26px rgba(120,0,20,0.35);
+  backdrop-filter: blur(2px); }
+#interact { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 11;
+  color: var(--trust-amber); font-size: 13px; letter-spacing: 2px; pointer-events: none;
+  transition: opacity 0.2s; text-shadow: 0 0 10px rgba(0,0,0,0.9); }
+
 #chat { position: fixed; bottom: 16px; left: 16px; width: 360px; z-index: 11; }
 #log { max-height: 220px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
 .msg { background: rgba(18,10,12,0.70); border-left: 3px solid #4a2329; padding: 6px 10px; margin-top: 6px;
