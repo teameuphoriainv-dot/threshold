@@ -1,0 +1,19 @@
+{
+  "name": "threshold-warden",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "THRESHOLD privileged Warden client — connects to SpacetimeDB, claims the Warden identity, and drives the adversary via Claude (PRD §6/§10).",
+  "scripts": {
+    "start": "tsx warden.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "dotenv": "^16.4.5",
+    "spacetimedb": "^2.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.0"
+  }
+}
