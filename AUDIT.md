@@ -53,18 +53,17 @@ Everything else is polish on top of a spine that doesn't exist yet. Build the sp
 - **PRD §5.4:** absorbed player enters the void, **can still chat, and the Warden can now speak as them**; teammates rescue via a "tether" object. This enables demo-script step 6 (§14) — "the Warden chats Judge B *as Judge A*." Without it, the single scariest beat is impossible.
 - **Fix:** absorbed state (`players.state = absorbed`), void chat channel, Warden gains mimic rights over absorbed players, `tether` interactable + `rescue` reducer.
 
-### 1.2 No fake anchors / lures
-- **Evidence:** `buildAnchors()` (`index.html:394`) spawns 3 all-`real:true`. The `anchors` table has `type(real|fake)` (§10.2) but nothing fake is created.
-- **PRD §4.4 / §6.3 `SPAWN_LURE`:** fakes look identical until placed; carrying fakes to convergence is a **loss** (§4.2).
-- **Fix:** spawn ≥1 fake; reveal-on-place; wire the fake-converged loss.
+### 1.2 No fake anchors / lures — ✅ DONE (slice)
+- **Was:** `buildAnchors()` spawned 3 all-`real:true`.
+- **Fix shipped:** one `real:false` anchor at `(12,-18)`, visually identical (same `makeAnchorMesh`). Reveal-on-place (core goes dark) + trauma/glitch. Still TODO: dynamic `SPAWN_LURE` action driven by the Warden (§6.3) rather than a fixed spawn.
 
 ### 1.3 Warden action set incomplete
 - **Have:** MIMIC, DISTORT, RESHAPE, MANIFEST (`index.html:794-797`).
 - **Missing (§6.3):** `SEAL_CORRIDOR` (the `room_exits.sealed` column exists in the PRD schema but no seal logic), `SPAWN_LURE`, `REVEAL_FALSE`, `CORRUPT_ITEM`.
 
 ### 1.4 Loss conditions incomplete
-- **Have:** time-out (`:1173`), manifest-contact (`:860`).
-- **Missing (§4.2):** all-players-absorbed; fake-anchors-converged. Both depend on 1.1 / 1.2.
+- **Have:** time-out (`:1173`), manifest-contact (`:860`), **fake-anchor-converged ✅ (new, §4.2).**
+- **Still missing (§4.2):** all-players-absorbed (depends on 1.1 void/rescue).
 
 ### 1.5 Coordination puzzles missing
 - **PRD §4.3:** "some convergence steps require 2+ players acting simultaneously in different rooms."
@@ -103,7 +102,7 @@ Current visuals = emissive materials + CSS overlays. Gaps:
 
 1. ~~Palette correction~~ — **resolved: keep crimson** (deliberate team override, 2.6).
 2. ~~Per-victim mimic cooldown (1.6)~~ — ✅ **shipped.**
-3. **One fake anchor + placed-fake loss** (1.2 / 1.4) — proves the lure mechanic end-to-end.
+3. ~~One fake anchor + placed-fake loss (1.2 / 1.4)~~ — ✅ **shipped.**
 4. **Audio drone + lightning SFX** (2.7) — instant dread lift, Mounish's lane.
 5. **Mouse-look pointer-lock** (3.3) — transforms game feel.
 

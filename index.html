@@ -404,6 +404,13 @@ function buildAnchors() {
     scene.add(mesh);
     anchors.push({ id: "anchor" + i, mesh, real: true, placed: false, carriedBy: null, pos: p.clone() });
   });
+  // PRD 4.4: one FAKE anchor (the Warden's lure). Visually identical to a real one —
+  // no tell until placed at convergence. Placing it = the lure succeeded = loss (PRD 4.2).
+  const fakePos = new V3(12, 0.9, -18);
+  const fakeMesh = makeAnchorMesh(false);
+  fakeMesh.position.copy(fakePos);
+  scene.add(fakeMesh);
+  anchors.push({ id: "anchorFake", mesh: fakeMesh, real: false, placed: false, carriedBy: null, pos: fakePos.clone() });
   // >>> SPACETIME: in the real build, anchors live in the `anchors` table; pickup/place are reducers.
 }
 
@@ -916,6 +923,13 @@ function handleInteract() {
     const a = state.carrying;
     a.placed = true; a.carriedBy = null; state.carrying = null;
     a.mesh.position.set(Math.cos(state.placed) * 2.2, 0.6, 4 + Math.sin(state.placed) * 1.2);
+    // PRD 4.2: a fake carried to convergence = the Warden's lure succeeded = loss.
+    if (!a.real) {
+      a.mesh.userData.core.material.emissive.setHex(0x120406);   // it finally drops the mask
+      addTrauma(0.7); document.getElementById("glitch").style.opacity = 0.7;
+      endGame(false, "The anchor went dark in your hands. It was never real — the Warden's lure. The true anchors are lost to the void.");
+      return;
+    }
     state.placed++;
     document.getElementById("anchorN").textContent = state.placed;
     convergence.material.emissiveIntensity = 1.2 + state.placed * 0.6;
