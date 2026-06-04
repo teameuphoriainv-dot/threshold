@@ -17,13 +17,23 @@ import { useGLTF } from "@react-three/drei";
 import { WALLS, collide } from "./world";
 
 // ---- which kit pieces are present (flip after dropping the matching .glb) ----
-const KIT = { walls: false, floor: false, pillars: false, props: false };
+// LIVE: dark Poly Haven CC0 set — rock-face cave walls, dead-tree monoliths,
+// roots/stumps/logs/rocks scattered. Floor stays the PBR alien terrain.
+const KIT = { walls: true, floor: false, pillars: true, props: true };
 const MODELS = {
-  wall: "/models/wall.glb",
+  wall: "/models/wall.glb",      // rock_face_02 (cave wall)
   floor: "/models/floor.glb",
-  pillar: "/models/pillar.glb",
-  prop: "/models/prop.glb",
+  pillar: "/models/pillar.glb",  // dead_quiver_trunk (standing dead tree → portal monolith)
 };
+// scattered organic props — distributed across all of these (Upside-Down dressing)
+const PROP_MODELS = [
+  "/models/prop_root.glb",    // single_root
+  "/models/prop_roots2.glb",  // root_cluster_02
+  "/models/prop_stump.glb",   // tree_stump_01
+  "/models/prop_log.glb",     // dead_tree_trunk_02
+  "/models/prop_rock.glb",    // rock_07
+];
+const PROP_BASE = 1.7;  // target base size (m) per prop before per-instance variation
 const WALL_MODULE = 4;   // native width (m) of one wall piece (KayKit ≈ 4)
 const FLOOR_TILE = 4;    // native footprint (m) of one floor tile
 const WALL_H = 9;        // game wall / pillar height
@@ -53,6 +63,7 @@ function tintMaterial(mat: THREE.Material | THREE.Material[], amount: number): T
   const m = src.clone() as THREE.MeshStandardMaterial;
   if (m.color) m.color.lerp(TINT, amount);
   if (m.emissive) m.emissive = EMISSIVE.clone();
+  m.side = THREE.DoubleSide; // rock faces / fronds are single-sided — avoid see-through walls
   return m;
 }
 
@@ -181,30 +192,44 @@ function PillarKit() {
 // ============================================================
 //  props — scattered debris/roots (deterministic, wall-avoiding)
 // ============================================================
-function propMatrices(): THREE.Matrix4[] {
+// deterministic scatter; each point is assigned one of the prop models.
+type Placement = { x: number; z: number; rotY: number; scale: number; model: number };
+function propPlacements(modelCount: number): Placement[] {
   const r = rng(1337);
-  const out: THREE.Matrix4[] = [];
-  for (let i = 0; i < 64 && out.length < 48; i++) {
+  const out: Placement[] = [];
+  for (let i = 0; i < 96 && out.length < 56; i++) {
     const x = (r() - 0.5) * 76;
     const z = (r() - 0.5) * 66;
     const [cx, cz] = collide(x, z, 1.2);                 // pushed = inside/against a wall → skip
     if (Math.hypot(cx - x, cz - z) > 0.01) continue;
     if (Math.hypot(x, z - 4) < 6) continue;              // keep convergence ring clear
-    const s = 0.7 + r() * 0.8;
-    out.push(
-      new THREE.Matrix4()
-        .makeTranslation(x, 0, z)
-        .multiply(new THREE.Matrix4().makeRotationY(r() * Math.PI * 2))
-        .multiply(new THREE.Matrix4().makeScale(s, s, s))
-    );
+    out.push({ x, z, rotY: r() * Math.PI * 2, scale: 0.7 + r() * 0.8, model: Math.floor(r() * modelCount) });
   }
   return out;
 }
 
 function PropKit() {
-  const { scene } = useGLTF(MODELS.prop);
-  const list = useMemo(() => buildInstances(moduleInfo(scene), propMatrices(), 0.35), [scene]);
-  return <Rendered list={list} />;
+  const gltfs = useGLTF(PROP_MODELS);                    // drei array form → one hook call
+  const scenes = gltfs.map((g) => g.scene);
+  const placements = useMemo(() => propPlacements(scenes.length), [scenes.length]);
+  const lists = useMemo(
+    () => scenes.map((scene, mi) => {
+      const info = moduleInfo(scene);
+      const norm = PROP_BASE / Math.max(info.size.x, info.size.y, info.size.z, 0.001); // normalize varied native sizes
+      const mats = placements
+        .filter((p) => p.model === mi)
+        .map((p) => {
+          const s = norm * p.scale;
+          return new THREE.Matrix4()
+            .makeTranslation(p.x, 0, p.z)
+            .multiply(new THREE.Matrix4().makeRotationY(p.rotY))
+            .multiply(new THREE.Matrix4().makeScale(s, s, s));
+        });
+      return buildInstances(info, mats, 0.4);
+    }),
+    [scenes, placements]
+  );
+  return <Rendered list={lists.flat()} />;
 }
 
 // ============================================================

@@ -1,21 +1,29 @@
-# Drop kit models here
+# World kit models (LIVE — dark Poly Haven CC0 set)
 
-WHISPERS auto-dresses the world from CC0 modules. Each piece is independent —
-add only what you want. Recommended kits: KayKit Dungeon Remastered, Quaternius.
+Auto-wired by `web/src/Kit.tsx`. All CC0 from Poly Haven, optimized
+(draco + webp 1k) via gltf-transform.
 
-| File         | What it tiles                          | Flag in Kit.tsx |
-|--------------|----------------------------------------|-----------------|
-| `wall.glb`   | walls along every level footprint      | `KIT.walls`     |
-| `floor.glb`  | floor-tile grid over the arena         | `KIT.floor`     |
-| `pillar.glb` | pillars at room corners (floor->ceiling)| `KIT.pillars`  |
-| `prop.glb`   | scattered debris/roots                 | `KIT.props`     |
+| File             | Source (Poly Haven) | Slot                          |
+|------------------|---------------------|-------------------------------|
+| `wall.glb`       | rock_face_02        | tiled cave walls              |
+| `pillar.glb`     | dead_quiver_trunk   | dead-tree monoliths (corners) |
+| `prop_root.glb`  | single_root         | scattered prop                |
+| `prop_roots2.glb`| root_cluster_02     | scattered prop                |
+| `prop_stump.glb` | tree_stump_01       | scattered prop                |
+| `prop_log.glb`   | dead_tree_trunk_02  | scattered prop                |
+| `prop_rock.glb`  | rock_07             | scattered prop                |
 
-## Steps (per file)
-1. Download the module as `.glb`.
-2. Optimize + place:
-   npx @gltf-transform/cli optimize raw.glb web/public/models/wall.glb \
-     --compress draco --texture-compress webp --simplify
-3. In `web/src/Kit.tsx`: set that piece's flag in `KIT = {...}` to `true`.
-   Tune `WALL_MODULE` / `FLOOR_TILE` to the piece's native size if it stretches.
+Floor stays the PBR alien terrain (`Ground.tsx`), not a kit tile.
 
-Missing or broken file = safe fallback (walls->boxes, others->nothing).
+## Tuning (in Kit.tsx)
+- `KIT = {...}` — toggle walls/floor/pillars/props.
+- `WALL_MODULE` — wall piece width (m); smaller = more, narrower segments.
+- `PROP_BASE` — base prop size before per-instance variation.
+- Pillars uniform-scale to `WALL_H` (9). Walls force DoubleSide (no see-through).
+
+## Add more
+npx @gltf-transform/cli optimize raw.glb web/public/models/NAME.glb \
+  --compress draco --texture-compress webp --texture-size 1024
+Then reference it (single slot) or add to `PROP_MODELS[]`.
+
+Note: draco decoded via drei's CDN decoder at runtime (needs network).
