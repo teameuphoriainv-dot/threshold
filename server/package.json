@@ -1,0 +1,10 @@
+{
+  "name": "whispers-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WHISPERS multiplayer relay (hybrid step toward SpacetimeDB). Reducer-style messages map 1:1 onto SpacetimeDB reducers later.",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}

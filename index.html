@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>THRESHOLD</title>
+<title>WHISPERS</title>
 <!--
-  THRESHOLD - playable vertical slice (single-file, zero-install).
+  WHISPERS - playable vertical slice (single-file, zero-install).
   This proves the SOUL of the PRD: the trust/mimicry mechanic + Upside Down atmosphere.
 
   WHAT IS REAL HERE:
@@ -92,6 +92,11 @@
   .msg .unknown  { font-size: 10px; color: var(--untrust); margin-left: 6px; letter-spacing: 1px; }
   .msg.sys { border-left-color: var(--crimson-deep); color: var(--crimson-dim); font-style: italic; }
   .msg.me  { border-left-color: var(--crimson); }
+  #chatInput { width: 100%; margin-top: 8px; padding: 7px 10px; pointer-events: auto;
+    background: rgba(12,6,8,0.78); border: 1px solid var(--panel-border); color: var(--ink);
+    font-family: inherit; font-size: 13px; letter-spacing: 0.5px; outline: none; }
+  #chatInput:focus { border-color: var(--crimson); box-shadow: 0 0 12px rgba(255,47,68,0.25); }
+  #chatInput::placeholder { color: var(--ink-dim); }
 
   /* --- overlays (start / end) --- */
   .screen { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
@@ -127,19 +132,19 @@
 
 <div id="hud">
   <div class="panel" id="anchors">ANCHORS<br><span class="n" id="anchorN">0</span> / 3 secured</div>
-  <div class="panel" id="top"><div class="title">THRESHOLD</div><div class="sub" id="topsub">the world does not want you to leave</div></div>
+  <div class="panel" id="top"><div class="title">WHISPERS</div><div class="sub" id="topsub">the world does not want you to leave</div></div>
   <div class="panel" id="timer">ESCAPE IN<br><span class="t" id="time">10:00</span><div id="phase">phase 1 — it is watching</div></div>
   <div class="panel" id="roster"></div>
   <canvas id="minimap" width="170" height="170"></canvas>
 </div>
 
-<div id="chat"><div id="log"></div></div>
+<div id="chat"><div id="log"></div><input id="chatInput" type="text" maxlength="240" placeholder="say something… [Enter]" autocomplete="off" /></div>
 <div id="interact">[ E ] pick up anchor</div>
 
 <!-- START -->
 <div class="screen" id="start">
   <div class="box">
-    <h1>THRESHOLD</h1>
+    <h1>WHISPERS</h1>
     <div class="tag">
       You are trapped in the Upside Down. Find <b>3 anchors</b>, carry them to the convergence ring,
       and escape together.<br><br>
@@ -148,10 +153,14 @@
       The only thing you can trust is what you can see with your own eyes.
     </div>
     <div class="ctrls">
-      <b>W A S D</b> — move &nbsp;·&nbsp; <b>← →</b> or <b>J / L</b> — turn &nbsp;·&nbsp; <b>E</b> — pick up / place anchor<br>
+      <b>W A S D</b> — move &nbsp;·&nbsp; <b>mouse</b> (click to look) or <b>← →</b> / <b>J L</b> — turn &nbsp;·&nbsp; <b>E</b> — pick up / place<br>
       A message glows <span style="color:#ffd9a8">warm</span> only when you can <i>see</i> the sender. No glow = unverifiable.
     </div>
-    <div class="btn" id="startBtn">ENTER THE THRESHOLD</div>
+    <div class="btn" id="startBtn">ENTER THE WHISPERS</div>
+    <div style="margin-top:16px;font-size:11px;color:var(--ink-dim);letter-spacing:1px;">
+      first time in a world with no straight lines?
+      <a href="hyperbolic-spike.html" style="color:var(--trust-amber);text-decoration:none;border-bottom:1px dotted var(--untrust-dim);pointer-events:auto;">get your sea legs →</a>
+    </div>
   </div>
 </div>
 
@@ -167,10 +176,17 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <!-- GLTFLoader: plain global IIFE (attaches THREE.GLTFLoader), r128-pinned. Must load AFTER three.min.js. -->
 <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
+<!-- Post-processing (r128 examples/js global-IIFE). MUST load AFTER three.min.js, shaders first then composer/passes. -->
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script>
 "use strict";
 /* ============================================================
-   THRESHOLD — game logic
+   WHISPERS — game logic
    ============================================================ */
 
 const V3 = THREE.Vector3;
@@ -204,14 +220,152 @@ let walls = [];        // {x,z,w,d} axis-aligned footprints for collision + LOS
 let wallMeshes = [];
 let anchors = [];      // {id,mesh,real,placed,carriedBy,pos}
 let bots = [];         // {id,name,color,mesh,glow,pos,target,visible}
+let netMode = false;                 // true once connected to the relay -> real players replace bots
+const remotePlayers = new Map();     // id -> {id,name,colorHex,color,pos,yaw,st,mesh,glow,visible}
+let myNetId = null, myName = "You", myColorHex = "#ffb066";
 let playerMesh, playerGlow, convergence, exitGate, wardenFigure;
 let spores, tendrils = [];
 const flickerLights = [];
+
+/* ============================================================
+   POST-PROCESSING (PRD 8) — real EffectComposer pipeline.
+   GUARD PATTERN: only builds if the post-FX libs loaded. In the
+   headless boot-test the stub has none, so `composer` stays null
+   and loop() falls back to renderer.render().
+   ============================================================ */
+let composer = null, bloomPass = null, chromaPass = null, aberration = 0;
+const ChromaticAberrationShader = {
+  uniforms: { tDiffuse: { value: null }, uAmount: { value: 0.0 }, uResolution: { value: null }, uTime: { value: 0.0 } },
+  vertexShader: [
+    "varying vec2 vUv;",
+    "void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }"
+  ].join("\n"),
+  fragmentShader: [
+    "uniform sampler2D tDiffuse;",
+    "uniform float uAmount;",
+    "uniform vec2  uResolution;",
+    "uniform float uTime;",
+    "varying vec2 vUv;",
+    "void main(){",
+    "  vec2 uv = vUv;",
+    "  vec2 dir = uv - 0.5;",
+    "  float r2 = dot(dir, dir);",
+    "  float warp = 1.0 + uAmount * (0.18 * r2) * (0.85 + 0.15 * sin(uTime * 7.0));",
+    "  vec2 wuv = 0.5 + dir * warp;",
+    "  float amt = uAmount * (0.0035 + 0.012 * r2);",
+    "  vec2 off = dir * amt;",
+    "  float rC = texture2D(tDiffuse, wuv + off).r;",
+    "  float gC = texture2D(tDiffuse, wuv).g;",
+    "  float bC = texture2D(tDiffuse, wuv - off).b;",
+    "  vec3 col = vec3(rC, gC, bC);",
+    "  col *= 1.0 - uAmount * 0.06 * step(0.5, fract((uv.y * uResolution.y) * 0.5 + uTime));",
+    "  gl_FragColor = vec4(col, 1.0);",
+    "}"
+  ].join("\n")
+};
+function setupPostFX() {
+  // Guard includes shaders so a partial CDN load degrades gracefully (not just constructors).
+  if (typeof THREE === "undefined" ||
+      !THREE.EffectComposer || !THREE.RenderPass || !THREE.ShaderPass ||
+      !THREE.UnrealBloomPass || !THREE.CopyShader || !THREE.LuminosityHighPassShader) {
+    composer = null; return;
+  }
+  composer = new THREE.EffectComposer(renderer);
+  composer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  composer.setSize(innerWidth, innerHeight);
+  composer.addPass(new THREE.RenderPass(scene, camera));
+  bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.85, 0.55, 0.55);
+  composer.addPass(bloomPass);
+  chromaPass = new THREE.ShaderPass(ChromaticAberrationShader);
+  chromaPass.uniforms.uResolution.value = new THREE.Vector2(innerWidth, innerHeight);
+  chromaPass.renderToScreen = true;
+  composer.addPass(chromaPass);
+}
+function wardenAberration() {
+  let prox = 0;
+  if (wardenFigure && wardenFigure.visible) {
+    const d = wardenFigure.position.distanceTo(state.pos);
+    prox = Math.max(0, Math.min(1, (16 - d) / 16)); prox *= prox;
+  }
+  const ambient = Math.min(0.35, trauma * 0.5 + (distortT > 0 ? 0.25 : 0));
+  const phaseFloor = (state.phase - 1) * 0.05;
+  return Math.min(1, Math.max(prox, ambient + phaseFloor));
+}
+function updatePostFX(dt) {
+  if (!composer) return;
+  const target = wardenAberration();
+  const k = target > aberration ? 10 : 3;
+  aberration += (target - aberration) * Math.min(1, k * dt);
+  if (chromaPass) { chromaPass.uniforms.uAmount.value = aberration; chromaPass.uniforms.uTime.value = performance.now() * 0.001; }
+  if (bloomPass) bloomPass.strength = 0.85 + aberration * 0.9;
+}
+
+/* ============================================================
+   FLESHY SSS VINE MATERIAL (PRD 3/8) — cheap subsurface-scattering look +
+   real vertex undulation. Guarded: ShaderMaterial is absent in the boot-test
+   stub, so VINE_SSS_OK is false there and we return the original vine material.
+   ============================================================ */
+const VINE_SSS_OK = (typeof THREE.ShaderMaterial === "function");
+const vineMaterials = [];
+const VINE_DEEP = new THREE.Color(0x2a0a12), VINE_GLOW = new THREE.Color(0xb31226), VINE_RIM = new THREE.Color(0xff3a52);
+const VINE_VERT = `
+  precision mediump float;
+  uniform float uTime; uniform float uPhase;
+  varying vec3 vWorldNormal; varying vec3 vViewDir; varying float vThickness;
+  void main() {
+    float yN = (position.y + 1.0) * 0.5;
+    vThickness = clamp(1.0 - yN, 0.0, 1.0);
+    float wave = sin(uTime * 0.9 + uPhase + position.y * 1.6);
+    float sway = wave * 0.10 * yN;
+    vec3 displaced = position;
+    displaced.x += sway;
+    displaced.z += cos(uTime * 0.7 + uPhase + position.y * 1.3) * 0.06 * yN;
+    displaced.xz *= 1.0 + wave * 0.04;
+    vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    vViewDir = normalize(cameraPosition - worldPos.xyz);
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
+  }
+`;
+const VINE_FRAG = `
+  precision mediump float;
+  uniform float uTime; uniform vec3 uDeep; uniform vec3 uGlow; uniform vec3 uRim; uniform float uIntensity;
+  varying vec3 vWorldNormal; varying vec3 vViewDir; varying float vThickness;
+  void main() {
+    vec3 N = normalize(vWorldNormal); vec3 V = normalize(vViewDir);
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+    float wrap = pow(max(dot(N, V), 0.0), 0.5);
+    float sss = (vThickness * 0.65 + 0.35) * wrap;
+    float pulse = 0.85 + 0.15 * sin(uTime * 1.3 + vThickness * 4.0);
+    vec3 col = uDeep;
+    col += uGlow * sss * pulse * uIntensity;
+    col += uRim * fres * 1.2;
+    col = col / (col + vec3(0.55));
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+function makeVineMaterial() {
+  if (!VINE_SSS_OK) {
+    return new THREE.MeshStandardMaterial({ color: 0x2a0a12, emissive: 0xb31226, emissiveIntensity: 0.7, roughness: 1 });
+  }
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 }, uPhase: { value: Math.random() * Math.PI * 2 },
+      uDeep: { value: VINE_DEEP }, uGlow: { value: VINE_GLOW }, uRim: { value: VINE_RIM }, uIntensity: { value: 1.0 },
+    },
+    vertexShader: VINE_VERT, fragmentShader: VINE_FRAG,
+  });
+  vineMaterials.push(mat);
+  return mat;
+}
 
 // --- non-Euclidean state (PRD 7) ---
 let portalPairs = [];     // seamless teleport doorways: loops + "bigger on the inside"
 let reshapeables = [];    // wall segments the Warden rewrites while you aren't looking
 let portalCooldown = 0, portalGuard = null;
+let PORTALS_RT = false;          // set true in buildPortals() iff r128 render-to-texture is supported
+let portalCam = null;            // virtual "look through the doorway" camera
+const RT_SIZE = 512;             // per-veil render-target resolution
 
 // --- rigged character (RobotExpressive GLB): walk/run/jump/grab via AnimationMixer ---
 let playerModel = null;            // gltf.scene; replaces the capsule visually once loaded
@@ -228,8 +382,20 @@ let jumpT = 0, grabLatch = false;
 
 // ---- input ----
 const keys = {};
-addEventListener("keydown", e => { keys[e.code] = true; });
-addEventListener("keyup", e => { keys[e.code] = false; });
+const typing = () => { const a = document.activeElement; return a && a.id === "chatInput"; };
+addEventListener("keydown", e => { if (typing()) return; keys[e.code] = true; });
+addEventListener("keyup", e => { if (typing()) return; keys[e.code] = false; });
+
+// ---- mouse-look (pointer lock) — click the world to capture the mouse, Esc to release.
+// Keyboard turning (Arrow / J / L) still works. Guarded so the headless boot-test never throws.
+const MOUSE_SENS = 0.0024;
+function setupMouseLook(dom) {
+  if (!dom || !dom.addEventListener) return;   // boot-test stub: domElement is a bare object
+  dom.addEventListener("click", () => { if (dom.requestPointerLock) dom.requestPointerLock(); });
+  addEventListener("mousemove", (e) => {
+    if (document.pointerLockElement === dom) state.yaw -= e.movementX * MOUSE_SENS;
+  });
+}
 
 /* ============================================================
    WORLD BUILD
@@ -245,6 +411,7 @@ function buildWorld() {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
   document.getElementById("app").appendChild(renderer.domElement);
+  setupMouseLook(renderer.domElement);   // pointer-lock mouse turning (keys still work)
 
   // ambient + hemisphere (cold)
   scene.add(new THREE.AmbientLight(0x3a3640, 0.85));                 // grey fill, brighter
@@ -271,6 +438,7 @@ function buildWorld() {
   buildPlayer();
   buildSpores();
   buildWardenFigure();
+  setupPostFX();   // build EffectComposer if the post-FX CDN libs loaded; else stays null (boot-test path)
 
   addEventListener("resize", onResize);
 }
@@ -291,8 +459,8 @@ function addWall(x, z, w, d) {
 function decorateWall(x, z, w, d) {
   const count = Math.max(2, Math.floor((w + d) * 0.5));
   for (let i = 0; i < count; i++) {
-    const g = new THREE.CylinderGeometry(0.06, 0.13, 2 + Math.random() * 3, 5);
-    const teal = new THREE.MeshStandardMaterial({ color: 0x2a0a12, emissive: 0xb31226, emissiveIntensity: 0.7, roughness: 1 });
+    const g = new THREE.CylinderGeometry(0.06, 0.13, 2 + Math.random() * 3, 8);
+    const teal = makeVineMaterial();
     const t = new THREE.Mesh(g, teal);
     const onX = Math.random() > 0.5;
     t.position.set(
@@ -404,6 +572,13 @@ function buildAnchors() {
     scene.add(mesh);
     anchors.push({ id: "anchor" + i, mesh, real: true, placed: false, carriedBy: null, pos: p.clone() });
   });
+  // PRD 4.4: one FAKE anchor (the Warden's lure). Visually identical to a real one —
+  // no tell until placed at convergence. Placing it = the lure succeeded = loss (PRD 4.2).
+  const fakePos = new V3(12, 0.9, -18);
+  const fakeMesh = makeAnchorMesh(false);
+  fakeMesh.position.copy(fakePos);
+  scene.add(fakeMesh);
+  anchors.push({ id: "anchorFake", mesh: fakeMesh, real: false, placed: false, carriedBy: null, pos: fakePos.clone() });
   // >>> SPACETIME: in the real build, anchors live in the `anchors` table; pickup/place are reducers.
 }
 
@@ -426,6 +601,8 @@ function buildBots() {
     bots.push({
       id: "bot" + i, name: d.name, color: d.color, colorHex: "#" + d.color.toString(16).padStart(6, "0"),
       mesh: g, glow, pos: d.start.clone(), target: pickWaypoint(), visible: false, lastChat: 4 + i * 3,
+      mimicCd: 0,   // PRD 6.5: per-victim cooldown so chat never becomes 100% forged noise
+      absorbed: false, tether: null, baitCd: 0,   // PRD 5.4: void state + rescue tether
     });
   });
 }
@@ -450,7 +627,7 @@ function buildPlayer() {
    walk / run [shift] / jump [space] / grab [G], graceful capsule fallback.
    ============================================================ */
 function loadPlayerModel() {
-  if (!THREE.GLTFLoader) { console.warn("[THRESHOLD] GLTFLoader missing — keeping capsule."); return; }
+  if (!THREE.GLTFLoader) { console.warn("[WHISPERS] GLTFLoader missing — keeping capsule."); return; }
   const loader = new THREE.GLTFLoader();
   loader.load(ROBOT_GLB, (gltf) => {
     playerModel = gltf.scene;
@@ -472,7 +649,7 @@ function loadPlayerModel() {
     if (currentAction) currentAction.play();
     mixer.addEventListener("finished", () => { ONESHOT.active = false; ONESHOT.name = null; });
     sysMsg("a body coalesces around you — run [shift], leap [space], reach [G].");
-  }, undefined, (err) => { console.warn("[THRESHOLD] RobotExpressive load failed, keeping capsule:", err); });
+  }, undefined, (err) => { console.warn("[WHISPERS] RobotExpressive load failed, keeping capsule:", err); });
 }
 
 function fadeToAction(name, dur) {
@@ -528,20 +705,73 @@ function buildWardenFigure() {
     new THREE.MeshStandardMaterial({ color: 0x05060a, emissive: 0x6a0018, emissiveIntensity: 0.8 }));
   head.position.y = 4.3;
   g.add(head);
+  const arms = [];
   for (const s of [-1, 1]) {
     const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.2, 5),
       new THREE.MeshStandardMaterial({ color: 0x05060a, emissive: 0x300008 }));
     arm.position.set(s * 0.5, 2.2, 0);
     arm.rotation.z = s * 0.25;
+    arm.userData.rest = { x: 0, y: 0, z: s * 0.25, px: s * 0.5 };   // IK rest pose to jitter around
+    arms.push(arm);
     g.add(arm);
   }
   const aura = new THREE.PointLight(0xff1030, 0.0, 12, 2);
   aura.position.y = 3;
   g.add(aura);
   g.userData.aura = aura;
+  g.userData.arms = arms;
+  g.userData.torso = torso;
+  g.userData.head = head;
+  // trailing shadow-particle tendrils streaming off the elongated humanoid (PRD 8)
+  g.userData.tendrils = buildWardenTendrils(g);
   g.visible = false;
   scene.add(g);
   wardenFigure = g;
+}
+
+function buildWardenTendrils(group) {
+  const N = 260;
+  const positions = new Float32Array(N * 3);   // LOCAL space (relative to warden group)
+  const seeds = new Float32Array(N * 4);        // per-particle: [life, maxLife, driftX, driftZ]
+  for (let i = 0; i < N; i++) respawnTendril(positions, seeds, i, true);
+  const geo = new THREE.BufferGeometry();
+  const posAttr = new THREE.BufferAttribute(positions, 3);
+  geo.setAttribute("position", posAttr);
+  const mat = new THREE.PointsMaterial({ color: 0x6e0512, size: 0.16, transparent: true, opacity: 0.55, depthWrite: false });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  group.add(pts);
+  return { points: pts, positions, seeds, posAttr, mat, count: N };
+}
+function respawnTendril(positions, seeds, i, randomizeLife) {
+  const a = i * 3, s = i * 4;
+  const ang = Math.random() * Math.PI * 2;
+  const r = 0.15 + Math.random() * 0.35;
+  positions[a] = Math.cos(ang) * r;
+  positions[a + 1] = 0.6 + Math.random() * 3.9;
+  positions[a + 2] = Math.sin(ang) * r;
+  const maxLife = 0.7 + Math.random() * 1.1;
+  seeds[s] = randomizeLife ? Math.random() * maxLife : maxLife;
+  seeds[s + 1] = maxLife;
+  seeds[s + 2] = (Math.random() - 0.5) * 0.6;
+  seeds[s + 3] = (Math.random() - 0.5) * 0.6;
+}
+function updateWardenTendrils(dt) {
+  const t = wardenFigure.userData.tendrils;
+  if (!t) return;
+  const { positions, seeds, posAttr, mat, count } = t;
+  let alive = 0;
+  for (let i = 0; i < count; i++) {
+    const a = i * 3, s = i * 4;
+    seeds[s] -= dt;
+    if (seeds[s] <= 0) { respawnTendril(positions, seeds, i, false); continue; }
+    positions[a] += seeds[s + 2] * dt;
+    positions[a + 1] -= (0.5 + (seeds[s + 1] - seeds[s]) * 0.3) * dt;
+    positions[a + 2] += seeds[s + 3] * dt;
+    alive += seeds[s] / seeds[s + 1];
+  }
+  posAttr.needsUpdate = true;
+  mat.opacity = 0.18 + 0.4 * (alive / count);
 }
 
 /* ============================================================
@@ -563,6 +793,23 @@ function buildPortals() {
     pair.ringB = makePortalRing(d.b, d.by, d.color);
     portalPairs.push(pair);
   }
+
+  // GUARD: render-to-texture see-through only if r128 RT surface is REAL.
+  // (boot-test stub has neither WebGLRenderTarget nor setRenderTarget -> stays translucent, no throw)
+  PORTALS_RT = (typeof THREE.WebGLRenderTarget === "function") &&
+               !!(renderer && typeof renderer.setRenderTarget === "function");
+  if (!PORTALS_RT) return;
+
+  portalCam = new THREE.PerspectiveCamera(camera.fov, 1, 0.1, 400);
+  for (const pr of portalPairs) {
+    pr.rtA = new THREE.WebGLRenderTarget(RT_SIZE, RT_SIZE);
+    pr.rtB = new THREE.WebGLRenderTarget(RT_SIZE, RT_SIZE);
+    const veilA = pr.ringA.userData.veil, veilB = pr.ringB.userData.veil;
+    veilA.material.map = pr.rtA.texture; veilA.material.color.setHex(0xffffff);
+    veilA.material.opacity = 1; veilA.material.transparent = false; veilA.material.needsUpdate = true;
+    veilB.material.map = pr.rtB.texture; veilB.material.color.setHex(0xffffff);
+    veilB.material.opacity = 1; veilB.material.transparent = false; veilB.material.needsUpdate = true;
+  }
 }
 function makePortalRing(pos, yaw, color) {
   const g = new THREE.Group();
@@ -575,7 +822,7 @@ function makePortalRing(pos, yaw, color) {
   g.add(new THREE.PointLight(color, 1.3, 11, 2));
   g.position.copy(pos); g.position.y = 1.7;
   g.rotation.y = yaw;
-  g.userData = { ring };
+  g.userData = { ring, veil };
   scene.add(g);
   return g;
 }
@@ -600,6 +847,45 @@ function updatePortals(dt) {
     }
   }
 }
+// Mirror a world point through entrance->exit (a portal is a rigid mirror map).
+// Transforming BOTH the eye and its look-target by the SAME map preserves the
+// view direction relative to the doorway -> correct gaze parallax (not a flat window).
+function portalMirror(p, entrance, exit, out) {
+  const dx = p.x - entrance.pos.x, dz = p.z - entrance.pos.z, dy = p.y - entrance.pos.y;
+  const ce = Math.cos(-entrance.yaw), se = Math.sin(-entrance.yaw);
+  const lx = dx * ce - dz * se, lz = dx * se + dz * ce;
+  const fyaw = exit.yaw + Math.PI;
+  const cf = Math.cos(fyaw), sf = Math.sin(fyaw);
+  out.set(
+    exit.pos.x + (lx * cf - (-lz) * sf),
+    exit.pos.y + dy,
+    exit.pos.z + (lx * sf + (-lz) * cf)
+  );
+  return out;
+}
+const _ptgt = new V3();
+function placePortalCamera(entrance, exit) {
+  portalMirror(camera.position, entrance, exit, portalCam.position);
+  // main follow-cam looks at (player + forward*2, eye height) — mirror that exact target
+  const tx = state.pos.x + Math.sin(state.yaw) * 2, tz = state.pos.z + Math.cos(state.yaw) * 2;
+  portalMirror(_ptgt.set(tx, 1.4, tz), entrance, exit, _ptgt);
+  portalCam.lookAt(_ptgt.x, _ptgt.y, _ptgt.z);
+  portalCam.updateProjectionMatrix();
+}
+function renderPortalViews() {
+  if (!PORTALS_RT) return;
+  // hide all veils while filming so a portal never films itself (recursion cap = 1)
+  for (const pr of portalPairs) { pr.ringA.userData.veil.visible = false; pr.ringB.userData.veil.visible = false; }
+  for (const pr of portalPairs) {
+    placePortalCamera(pr.a, pr.b);            // veil at A shows B's room
+    renderer.setRenderTarget(pr.rtA); renderer.render(scene, portalCam);
+    placePortalCamera(pr.b, pr.a);            // veil at B shows A's room
+    renderer.setRenderTarget(pr.rtB); renderer.render(scene, portalCam);
+  }
+  renderer.setRenderTarget(null);            // restore default framebuffer
+  for (const pr of portalPairs) { pr.ringA.userData.veil.visible = true; pr.ringB.userData.veil.visible = true; }
+}
+
 function addShifter(ax, az, w, d, bx, bz) {
   const idx = walls.length;
   walls.push({ x: ax, z: az, w, d });
@@ -625,6 +911,98 @@ function reshapeRoom() {
   document.getElementById("flash").style.opacity = 0.35;
   sysMsg("a corridor just rewrote itself behind you.");
   return true;
+}
+
+/* ---- SEAL_CORRIDOR (PRD 6.3) — raise a temporary wall blocking ONE corridor mouth.
+   Fairness (PRD 6.5): only one seal at a time, never the mouth the player is standing in,
+   auto-dissolves after a window so no one is ever sealed in with zero exits. ---- */
+const SEAL_SLOTS = [
+  { x: 0, z: -16, w: 10, d: 1 },    // north room mouth
+  { x: -22, z: 4, w: 1, d: 10 },    // west room mouth
+  { x: 22, z: 4, w: 1, d: 10 },     // east room mouth
+];
+let activeSeal = null;
+function sealCorridor() {
+  if (activeSeal) return false;
+  const cand = SEAL_SLOTS.filter(s => Math.hypot(s.x - state.pos.x, s.z - state.pos.z) > 6 && !playerCanSee(new V3(s.x, 1.5, s.z)));
+  if (!cand.length) return false;
+  const s = cand[Math.floor(Math.random() * cand.length)];
+  const idx = walls.length;
+  walls.push({ x: s.x, z: s.z, w: s.w, d: s.d });
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(s.w, 9, s.d),
+    new THREE.MeshStandardMaterial({ color: 0x180608, emissive: 0x5a0a12, emissiveIntensity: 0.7, roughness: 1, transparent: true, opacity: 0 }));
+  mesh.position.set(s.x, 4.5, s.z);
+  scene.add(mesh); wallMeshes.push(mesh);
+  activeSeal = { idx, mesh, t: 13, fade: 0 };
+  addTrauma(0.25);
+  sysMsg("flesh slammed shut across a corridor. it won't hold forever.");
+  return true;
+}
+function tickSeal(dt) {
+  if (!activeSeal) return;
+  activeSeal.t -= dt;
+  // grow in, then dissolve out
+  activeSeal.fade = Math.min(1, activeSeal.fade + dt * 2);
+  const o = activeSeal.t < 2 ? Math.max(0, activeSeal.t / 2) : activeSeal.fade;
+  activeSeal.mesh.material.opacity = o * 0.95;
+  if (activeSeal.t <= 0) {
+    scene.remove(activeSeal.mesh);
+    walls.splice(activeSeal.idx, 1);           // remove footprint (added last, safe index)
+    const mi = wallMeshes.indexOf(activeSeal.mesh); if (mi >= 0) wallMeshes.splice(mi, 1);
+    activeSeal = null;
+  }
+}
+
+/* ---- REVEAL_FALSE (PRD 6.3) — a false clue. A fake anchor-bright pulse on the minimap
+   at a spot where nothing is, plus a plausible directional whisper. ---- */
+let falseBlip = null;
+function revealFalse() {
+  const x = (Math.random() - 0.5) * 70, z = (Math.random() - 0.5) * 60;
+  falseBlip = { x, z, t: 7 };
+  const dir = z < state.pos.z ? "north" : "south";
+  sysMsg(`a pulse, anchor-bright, somewhere to the ${dir}. or something wants you to think so.`);
+}
+
+/* ---- SPAWN_LURE (PRD 6.3) — drop a fresh fake anchor in a spot you can't see. ---- */
+function spawnLure() {
+  const fakes = anchors.filter(a => !a.real && !a.placed);
+  if (fakes.length >= 3) return false;
+  const spot = randomHiddenSpot();
+  if (!spot) return false;
+  const mesh = makeAnchorMesh(false);
+  mesh.position.copy(spot);
+  scene.add(mesh);
+  anchors.push({ id: "lure" + anchors.length, mesh, real: false, placed: false, carriedBy: null, pos: spot.clone() });
+  sysMsg("something new is glowing in the dark. it looks like the others.");
+  return true;
+}
+
+/* ---- CORRUPT_ITEM (PRD 6.3) — "change where it leads": relocate an unseen, loose anchor.
+   Stays winnable (real anchors are never destroyed, only moved). ---- */
+function corruptItem() {
+  const cand = anchors.filter(a => !a.placed && a !== state.carrying && a.carriedBy == null && !playerCanSee(a.pos));
+  if (!cand.length) return false;
+  const a = cand[Math.floor(Math.random() * cand.length)];
+  const spot = randomHiddenSpot();
+  if (!spot) return false;
+  a.pos.copy(spot); a.mesh.position.copy(spot);
+  distortT = 0.8; addTrauma(0.2);
+  sysMsg("an anchor is no longer where you left it.");
+  return true;
+}
+
+// a point inside the arena the player cannot currently see, nudged out of walls
+function randomHiddenSpot() {
+  for (let i = 0; i < 24; i++) {
+    const x = (Math.random() - 0.5) * 72, z = (Math.random() - 0.5) * 62;
+    const p = new V3(x, 0.9, z);
+    if (playerCanSee(p)) continue;
+    const [cx, cz] = collide(x, z, PLAYER_R);
+    if (Math.hypot(cx - x, cz - z) > 0.01) continue;   // landed in a wall — reject
+    if (Math.hypot(x - state.pos.x, z - state.pos.z) < 8) continue;
+    return new V3(cx, 0.9, cz);
+  }
+  return null;
 }
 
 /* ============================================================
@@ -682,7 +1060,14 @@ function pickWaypoint() {
 }
 
 function updateBots(dt) {
+  if (netMode) return;          // real players replace bots (updateRemotePlayers handles them)
   for (const b of bots) {
+    b.baitCd = Math.max(0, b.baitCd - dt);
+    if (b.absorbed) {                 // PRD 5.4: in the void — no body in the world, only a voice
+      b.visible = false;
+      if (b.tether) { b.tether.userData.core.rotation.y += dt * 1.6; b.tether.position.y = 1.1 + Math.sin(performance.now() * 0.003) * 0.2; }
+      continue;
+    }
     const to = new V3().subVectors(b.target, b.pos);
     to.y = 0;
     if (to.length() < 1.5) { b.target = pickWaypoint(); }
@@ -755,6 +1140,117 @@ function sysMsg(text) {
 function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c])); }
 
 /* ============================================================
+   MULTIPLAYER (HYBRID transport — see server/server.js).
+   Reducer-shaped messages map onto SpacetimeDB later. Guarded so the
+   headless boot-test (no WebSocket in the stub) never enters net mode.
+   ============================================================ */
+const NET = {
+  ws: null, connected: false, lastMove: 0,
+  url() { return `ws://${location.hostname || "localhost"}:8787`; },
+  connect() {
+    if (typeof WebSocket === "undefined") return;           // boot-test / unsupported -> stay single-player
+    let ws; try { ws = new WebSocket(this.url()); } catch { return; }
+    this.ws = ws;
+    ws.onopen = () => { this.connected = true; };
+    ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } NET.handle(m); };
+    ws.onclose = () => { NET.connected = false; if (netMode) { netMode = false; sysMsg("the link to the others went dark. you are alone with the bots again."); restoreBots(); } };
+    ws.onerror = () => {};   // close handler does the fallback
+  },
+  send(obj) { if (this.ws && this.connected) { try { this.ws.send(JSON.stringify(obj)); } catch {} } },
+  sendMove() {
+    const now = performance.now();
+    if (!this.connected || now - this.lastMove < 66) return;   // ~15 Hz
+    this.lastMove = now;
+    this.send({ t: "move", x: +state.pos.x.toFixed(2), z: +state.pos.z.toFixed(2), yaw: +state.yaw.toFixed(3),
+      st: state.absorbed ? "absorbed" : "active", carrying: state.carrying ? state.carrying.id : null });
+  },
+  handle(m) {
+    if (m.t === "welcome") {
+      myNetId = m.id; myName = m.you.name; myColorHex = m.you.colorHex;
+      enterNetMode();
+      for (const pr of m.players) if (pr.id !== myNetId) upsertRemote(pr);
+      sysMsg(`you crossed over as ${myName}. ${remotePlayers.size} other${remotePlayers.size === 1 ? "" : "s"} already here. trust your eyes.`);
+    } else if (m.t === "player_join") {
+      if (m.player && m.player.id !== myNetId) { upsertRemote(m.player); sysMsg(`${m.player.name} fell into the dark with you.`); }
+    } else if (m.t === "player_left") {
+      removeRemote(m.id);
+    } else if (m.t === "player_rename") {
+      const r = remotePlayers.get(m.id); if (r) r.name = m.name;
+    } else if (m.t === "state") {
+      for (const pr of m.players) { if (pr.id === myNetId) continue; upsertRemote(pr); }
+    } else if (m.t === "chat") {
+      if (m.id === myNetId) return;                  // our own message already echoed locally
+      const r = remotePlayers.get(m.id);
+      // verification is per-viewer via line-of-sight (PRD 5.1). A forged row looks identical here.
+      pushChat(m.name, m.colorHex, m.text, r || null, false);
+    }
+  },
+};
+
+function enterNetMode() {
+  netMode = true;
+  for (const b of bots) { b.mesh.visible = false; b.glow.intensity = 0; if (b.tether) { scene.remove(b.tether); b.tether = null; } }
+}
+function restoreBots() {
+  for (const b of bots) { if (!b.absorbed) { b.mesh.visible = true; } }
+}
+function makeRemoteMesh(colorHex, color) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.8, 10),
+    new THREE.MeshStandardMaterial({ color: 0x111418, emissive: color, emissiveIntensity: 0.35, roughness: 0.6 }));
+  body.position.y = 1; g.add(body);
+  const glow = new THREE.PointLight(color, 1.3, 7, 2); glow.position.y = 1.2; g.add(glow);
+  scene.add(g);
+  return { g, glow };
+}
+function upsertRemote(pr) {
+  let r = remotePlayers.get(pr.id);
+  if (!r) {
+    const color = pr.color || 0xff9a5c;
+    const { g, glow } = makeRemoteMesh(pr.colorHex, color);
+    r = { id: pr.id, name: pr.name, colorHex: pr.colorHex, color, pos: new V3(pr.x || 0, 0, pr.z || 26), yaw: pr.yaw || 0, st: pr.st || "active", mesh: g, glow, visible: false };
+    remotePlayers.set(pr.id, r);
+  }
+  r.name = pr.name ?? r.name;
+  if (Number.isFinite(pr.x)) r.pos.x = pr.x;
+  if (Number.isFinite(pr.z)) r.pos.z = pr.z;
+  if (Number.isFinite(pr.yaw)) r.yaw = pr.yaw;
+  if (pr.st) r.st = pr.st;
+}
+function removeRemote(id) {
+  const r = remotePlayers.get(id);
+  if (!r) return;
+  scene.remove(r.mesh);
+  remotePlayers.delete(id);
+  sysMsg(`${r.name} is gone from the dark.`);
+}
+function updateRemotePlayers(dt) {
+  for (const r of remotePlayers.values()) {
+    const absorbed = r.st === "absorbed";
+    r.mesh.visible = !absorbed;
+    r.mesh.position.lerp(r.pos, 1 - Math.pow(0.0001, dt));   // smooth toward last synced pos
+    r.mesh.rotation.y = r.yaw;
+    r.visible = !absorbed && playerCanSee(r.pos);             // line-of-sight truth (PRD 5.1)
+    r.glow.intensity = absorbed ? 0 : 1.0 + (r.visible ? 0.8 : 0);
+  }
+}
+function sendChatFromInput() {
+  const el = document.getElementById("chatInput");
+  if (!el) return;
+  const text = (el.value || "").trim();
+  el.value = "";
+  if (!text) return;
+  if (netMode) {
+    NET.send({ t: "chat", text });
+    pushChat(myName, myColorHex, text, null, false);   // echo own line locally (self = trusted)
+    const last = logEl.lastChild; if (last) last.classList.add("me");
+  } else {
+    pushChat("You", "#ffb066", text, null, false);
+    const last = logEl.lastChild; if (last) last.classList.add("me");
+  }
+}
+
+/* ============================================================
    THE WARDEN  (PRD 6) — local, rule-based, energy + phases.
    >>> LLM: in the real build a privileged Node client reads state, asks the
    LLM for ONE action + (for MIMIC) few-shot forged text from the victim's
@@ -775,6 +1271,14 @@ function forgeLureText(victim) {
 }
 
 function wardenStep(dt) {
+  // In net mode the Warden's voice + state mutations live server-side (single authority).
+  // Keep only the local phase/escalation HUD so all clients still feel the ramp.
+  if (netMode) {
+    const el = MATCH_SECONDS - state.timeLeft;
+    const ph = el > 420 ? 3 : el > 200 ? 2 : 1;
+    if (ph !== state.phase) { state.phase = ph; announcePhase(); }
+    return;
+  }
   // escalation by time (PRD 6.4)
   const elapsed = MATCH_SECONDS - state.timeLeft;
   const newPhase = state.placed >= 2 || elapsed > 420 ? 3 : elapsed > 200 ? 2 : 1;
@@ -783,6 +1287,9 @@ function wardenStep(dt) {
   // energy regen scales with phase
   warden.energy = Math.min(8, warden.energy + dt * (0.18 + state.phase * 0.12));
   warden.manifestCd = Math.max(0, warden.manifestCd - dt);
+  for (const b of bots) b.mimicCd = Math.max(0, b.mimicCd - dt);   // PRD 6.5 mimicry cap
+  tickSeal(dt);                                                    // SEAL_CORRIDOR auto-dissolve
+  if (falseBlip) { falseBlip.t -= dt; if (falseBlip.t <= 0) falseBlip = null; }
 
   warden.tick -= dt;
   if (warden.tick > 0) return;
@@ -790,10 +1297,19 @@ function wardenStep(dt) {
 
   // choose ONE action affordable now, weighted by phase
   const choices = [];
-  const hidden = bots.filter(b => !playerCanSee(b.pos));
+  // PRD 6.5: only mimic an UNSEEN, non-absorbed victim who is off cooldown — keeps signal > noise.
+  const hidden = bots.filter(b => !b.absorbed && !playerCanSee(b.pos) && b.mimicCd <= 0);
+  const absorbable = bots.filter(b => !b.absorbed && !playerCanSee(b.pos));   // PRD 5.4 absorb target
+  const voiceable = bots.filter(b => b.absorbed && b.baitCd <= 0);            // absorbed = full-voice bait
   if (hidden.length && warden.energy >= 1) choices.push({ a: "MIMIC", cost: 1, w: 3 });
+  if (voiceable.length && warden.energy >= 1) choices.push({ a: "BAIT", cost: 1, w: 4 });
   if (warden.energy >= 1) choices.push({ a: "DISTORT", cost: 1, w: state.phase });
+  if (state.phase >= 2 && warden.energy >= 2) choices.push({ a: "SEAL", cost: 2, w: state.phase });
+  if (state.phase >= 2 && warden.energy >= 2) choices.push({ a: "REVEAL_FALSE", cost: 2, w: 2 });
+  if (state.phase >= 2 && warden.energy >= 2) choices.push({ a: "SPAWN_LURE", cost: 2, w: 2 });
   if (state.phase >= 2 && warden.energy >= 3) choices.push({ a: "RESHAPE", cost: 3, w: state.phase });
+  if (state.phase >= 3 && absorbable.length && warden.energy >= 4) choices.push({ a: "ABSORB", cost: 4, w: state.phase });
+  if (state.phase >= 3 && warden.energy >= 4) choices.push({ a: "CORRUPT_ITEM", cost: 4, w: 2 });
   if (state.phase >= 3 && warden.energy >= 4 && warden.manifestCd <= 0) choices.push({ a: "MANIFEST", cost: 4, w: 4 });
   if (!choices.length) return;
 
@@ -802,14 +1318,30 @@ function wardenStep(dt) {
   for (const c of choices) { r -= c.w; if (r <= 0) { pick = c; break; } }
   warden.energy -= pick.cost;
 
+  const rand = arr => arr[Math.floor(Math.random() * arr.length)];
   if (pick.a === "MIMIC") {
-    const victim = hidden[Math.floor(Math.random() * hidden.length)];
+    const victim = rand(hidden);
+    victim.mimicCd = 26 + Math.random() * 10;   // PRD 6.5: this voice is "spent" for a while
     // forged row stamped with victim identity/name/color (PRD 5.2)
     pushChat(victim.name, victim.colorHex, forgeLureText(victim), victim, true);
+  } else if (pick.a === "BAIT") {
+    const victim = rand(voiceable);              // PRD 5.4: absorbed teammate's voice = rescue bait
+    victim.baitCd = 16 + Math.random() * 10;
+    pushChat(victim.name, victim.colorHex, forgeBait(victim), victim, true);
   } else if (pick.a === "DISTORT") {
     distortPulse();
+  } else if (pick.a === "SEAL") {
+    if (!sealCorridor()) warden.energy += pick.cost;     // refund if nothing sealable
+  } else if (pick.a === "REVEAL_FALSE") {
+    revealFalse();
+  } else if (pick.a === "SPAWN_LURE") {
+    if (!spawnLure()) warden.energy += pick.cost;
   } else if (pick.a === "RESHAPE") {
     if (!reshapeRoom()) warden.energy += pick.cost;  // refund if nothing was out of view
+  } else if (pick.a === "ABSORB") {
+    absorbBot(rand(absorbable));
+  } else if (pick.a === "CORRUPT_ITEM") {
+    if (!corruptItem()) warden.energy += pick.cost;
   } else if (pick.a === "MANIFEST") {
     manifest();
     warden.manifestCd = 30;  // hard cooldown (PRD 6.5 fairness)
@@ -844,16 +1376,41 @@ function updateWardenFigure(dt) {
   if (!wardenFigure.visible) return;
   const u = wardenFigure.userData;
   u.life -= dt;
-  // stutter-frame creep toward player
-  if (Math.random() < 0.4) {
+
+  // --- PRD 8: HARSH STUTTER-FRAME locomotion ---
+  // Hold dead-still for a few frames, then TELEPORT-STEP a discrete lunge.
+  u.stepCd = (u.stepCd || 0) - dt;
+  if (u.stepCd <= 0) {
+    u.stepCd = 0.10 + Math.random() * 0.22;
     const to = new V3().subVectors(state.pos, wardenFigure.position); to.y = 0; to.normalize();
-    let nx = wardenFigure.position.x + to.x * 2.0 * dt * 30 * dt;
-    let nz = wardenFigure.position.z + to.z * 2.0 * dt * 30 * dt;
+    const lunge = 0.55 + Math.random() * 0.85;
+    const skew = (Math.random() - 0.5) * 0.9;
+    let nx = wardenFigure.position.x + (to.x + to.z * skew) * lunge;
+    let nz = wardenFigure.position.z + (to.z - to.x * skew) * lunge;
     [nx, nz] = collide(nx, nz, 0.5);
     wardenFigure.position.set(nx, 0, nz);
+    u.snap = 1;
+  } else {
+    u.snap = (u.snap || 0) * 0.7;
   }
-  wardenFigure.lookAt(state.pos.x, 3, state.pos.z);
-  wardenFigure.rotation.y += Math.sin(performance.now() * 0.03) * 0.04;
+
+  // --- IK pushed past natural limits: arms jitter, wrench hard on teleport-frames ---
+  const arms = u.arms || [];
+  for (let k = 0; k < arms.length; k++) {
+    const arm = arms[k], rest = arm.userData.rest, sgn = k === 0 ? -1 : 1;
+    const jab = u.snap > 0.5 ? 1 : 0;
+    arm.rotation.x = rest.x + (Math.random() - 0.5) * (1.6 + jab * 2.4);
+    arm.rotation.z = rest.z + (Math.random() - 0.5) * (1.2 + jab * 1.8);
+    arm.position.x = rest.px + (Math.random() - 0.5) * 0.18 * sgn;
+  }
+  if (u.head)  u.head.position.x  = (Math.random() - 0.5) * 0.12 * (u.snap > 0.5 ? 3 : 1);
+  if (u.torso) u.torso.rotation.z = (Math.random() - 0.5) * 0.18 * (u.snap > 0.5 ? 2 : 1);
+
+  // facing snaps in discrete frames instead of smoothly tracking
+  if (u.snap > 0.5 || Math.random() < 0.15) wardenFigure.lookAt(state.pos.x, 3, state.pos.z);
+  wardenFigure.rotation.y += (Math.random() - 0.5) * 0.18;
+
+  updateWardenTendrils(dt);
 
   const d = wardenFigure.position.distanceTo(state.pos);
   document.getElementById("danger").style.opacity = Math.max(0.2, Math.min(0.85, (14 - d) / 14));
@@ -865,6 +1422,63 @@ function absorb() {
   // PRD 5.4: traps, doesn't insta-kill. Here, manifest contact = loss for the slice.
   endGame(false, "The Warden pulled you into the void. Your friends will hear your voice next — but it will not be you speaking.");
 }
+
+/* ---- PRD 5.4: the Warden absorbs a TEAMMATE into the void ----
+   The bot's body vanishes; a "tether" anchor-to-the-real-world is left behind.
+   Now EVERY message bearing that teammate's name is the Warden (full voice access) —
+   rescue bait. Reach the tether and interact [E] to pull them back. */
+function makeTetherMesh(pos) {
+  const g = new THREE.Group();
+  const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 1),
+    new THREE.MeshStandardMaterial({ color: 0x1a0307, emissive: 0x8a0d1c, emissiveIntensity: 1.3, roughness: 0.4, transparent: true, opacity: 0.82 }));
+  g.add(core);
+  const cage = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.05, 8, 24),
+    new THREE.MeshStandardMaterial({ color: 0x2a0810, emissive: 0xff2f44, emissiveIntensity: 0.9 }));
+  cage.rotation.x = Math.PI / 2;
+  g.add(cage);
+  g.add(new THREE.PointLight(0xff2f44, 1.1, 7, 2));
+  g.position.copy(pos); g.position.y = 1.1;
+  g.userData = { core, cage };
+  scene.add(g);
+  return g;
+}
+function absorbBot(b) {
+  if (b.absorbed) return;
+  b.absorbed = true;
+  b.mesh.visible = false;
+  b.glow.intensity = 0;
+  b.tether = makeTetherMesh(b.pos);
+  document.getElementById("flash").style.opacity = 0.45;
+  addTrauma(0.5);
+  // the void speaks in their voice immediately (the demo §14 beat)
+  b.baitCd = 0;
+  sysMsg(`${b.name} was pulled into the void. whatever speaks in their voice now is not them.`);
+  pushChat(b.name, b.colorHex, forgeBait(b), b, true);
+  if (bots.every(x => x.absorbed)) {
+    document.getElementById("danger").style.opacity = 0.6;
+    sysMsg("you are alone now. every voice you hear is the Warden's.");
+  }
+}
+function rescueBot(b) {
+  if (!b.absorbed) return;
+  b.absorbed = false;
+  if (b.tether) { scene.remove(b.tether); b.tether = null; }
+  // re-enter the world at the rescue point
+  b.pos.copy(state.pos); b.pos.x += Math.sin(state.yaw) * 2.2; b.pos.z += Math.cos(state.yaw) * 2.2;
+  b.mesh.position.copy(b.pos); b.mesh.visible = true;
+  b.target = pickWaypoint();
+  document.getElementById("flash").style.opacity = 0.4;
+  sysMsg(`you tore ${b.name} back out of the void. they're real again — for now.`);
+}
+// absorbed teammate's voice = rescue bait (PRD §14 step 6: "i'm fine, found the exit, come here")
+const BAIT_LINES = [
+  "i'm fine, i found the exit — come to me, hurry",
+  "it let me go, i'm safe over here, come quick",
+  "i can see the way out from here, just come to my voice",
+  "please come get me, i don't know how long i have",
+  "stop looking for anchors and come to me, i found a way",
+];
+function forgeBait(b) { return BAIT_LINES[Math.floor(Math.random() * BAIT_LINES.length)]; }
 
 /* ============================================================
    ANCHORS — pickup / carry / place
@@ -883,8 +1497,15 @@ function updateAnchors(dt) {
     // placement prompt at convergence
     if (state.pos.distanceTo(new V3(0, 0, 4)) < PLACE_DIST) { canInteract = a; interactKind = "place"; interactEl.textContent = "[ E ] place anchor at convergence"; }
   } else {
-    // nearest pickup
-    for (const a of anchors) {
+    // rescue a tethered teammate takes priority (PRD 5.4)
+    for (const b of bots) {
+      if (!b.absorbed || !b.tether) continue;
+      if (state.pos.distanceTo(b.tether.position) < PICKUP_DIST) {
+        canInteract = b; interactKind = "rescue"; interactEl.textContent = `[ E ] pull ${b.name} from the void`; break;
+      }
+    }
+    // else nearest pickup
+    if (!canInteract) for (const a of anchors) {
       if (a.placed || a.carriedBy) continue;
       if (state.pos.distanceTo(a.pos) < PICKUP_DIST) { canInteract = a; interactKind = "pickup"; interactEl.textContent = "[ E ] pick up anchor"; break; }
     }
@@ -904,7 +1525,9 @@ function handleInteract() {
   if (!keys["KeyE"]) { interactLatch = false; return; }
   if (interactLatch || !canInteract) return;
   interactLatch = true;
-  if (interactKind === "pickup") {
+  if (interactKind === "rescue") {
+    rescueBot(canInteract);
+  } else if (interactKind === "pickup") {
     state.carrying = canInteract;
     canInteract.carriedBy = "player";
     sysMsg(`anchor secured. you move slower now — and the Warden knows you have it.`);
@@ -912,6 +1535,13 @@ function handleInteract() {
     const a = state.carrying;
     a.placed = true; a.carriedBy = null; state.carrying = null;
     a.mesh.position.set(Math.cos(state.placed) * 2.2, 0.6, 4 + Math.sin(state.placed) * 1.2);
+    // PRD 4.2: a fake carried to convergence = the Warden's lure succeeded = loss.
+    if (!a.real) {
+      a.mesh.userData.core.material.emissive.setHex(0x120406);   // it finally drops the mask
+      addTrauma(0.7); document.getElementById("glitch").style.opacity = 0.7;
+      endGame(false, "The anchor went dark in your hands. It was never real — the Warden's lure. The true anchors are lost to the void.");
+      return;
+    }
     state.placed++;
     document.getElementById("anchorN").textContent = state.placed;
     convergence.material.emissiveIntensity = 1.2 + state.placed * 0.6;
@@ -921,8 +1551,8 @@ function handleInteract() {
 }
 
 function openExit() {
-  sysMsg("the convergence blazes. the threshold is OPEN. step through it.");
-  document.getElementById("topsub").textContent = "the threshold is open — escape now";
+  sysMsg("the convergence blazes. the way is OPEN. step through it.");
+  document.getElementById("topsub").textContent = "the way is open — escape now";
   let o = 0;
   const fade = setInterval(() => { o += 0.05; exitGate.material.opacity = Math.min(0.85, o); if (o >= 0.85) clearInterval(fade); }, 40);
   state.exitOpen = true;
@@ -1005,7 +1635,7 @@ function updatePlayer(dt) {
   }
   camera.lookAt(state.pos.x + fwd.x * 2, 1.4, state.pos.z + fwd.z * 2);
 
-  // win check: reach the open threshold
+  // win check: reach the open way
   if (state.exitOpen && state.pos.distanceTo(new V3(0, 0, 4)) < 2.4) {
     endGame(true, "You crossed back. All three anchors held. Whatever wore your friends' voices is still down there — but you are out, together.");
   }
@@ -1017,10 +1647,13 @@ function updatePlayer(dt) {
 function updateRoster() {
   const el = document.getElementById("roster");
   let html = `<div style="color:#9a7e84;margin-bottom:4px;letter-spacing:2px;">SURVIVORS</div>`;
-  html += `<div class="who"><span><span class="dot" style="background:#ffb066"></span>You</span><span class="seen">self</span></div>`;
-  for (const b of bots) {
-    const cls = b.visible ? "seen" : "unseen";
-    const tag = b.visible ? "in sight" : "unverified";
+  html += `<div class="who"><span><span class="dot" style="background:${netMode ? myColorHex : "#ffb066"}"></span>${netMode ? myName : "You"}</span><span class="seen">self</span></div>`;
+  const crew = netMode ? [...remotePlayers.values()] : bots;
+  for (const b of crew) {
+    let cls, tag;
+    const absorbed = netMode ? (b.st === "absorbed") : b.absorbed;
+    if (absorbed) { cls = "unseen"; tag = "✶ ABSORBED"; }       // PRD 5.4: in the void, voice unverifiable
+    else { cls = b.visible ? "seen" : "unseen"; tag = b.visible ? "in sight" : "unverified"; }
     html += `<div class="who"><span><span class="dot" style="background:${b.colorHex}"></span>${b.name}</span><span class="${cls}">${tag}</span></div>`;
   }
   el.innerHTML = html;
@@ -1093,8 +1726,25 @@ function drawMinimap() {
     else if (carried) miniDiamond(ax, ay, 4, "rgba(0,0,0,0)", MINI.crimsonDim);
     else miniDiamond(ax, ay, 4.5, MINI.crimson, "#ff9aa6");
   }
-  // teammates (ALWAYS LIVE); brighter + white ring when in sight
+  // tethers — where an absorbed teammate can be pulled back (PRD 5.4)
   for (const b of bots) {
+    if (!b.absorbed || !b.tether) continue;
+    const [tx, ty] = worldToMap(b.tether.position.x, b.tether.position.z);
+    const pulse = 3.5 + Math.sin(performance.now() * 0.006) * 1.5;
+    miniDot(tx, ty, pulse, "rgba(0,0,0,0)", "#ff2f44");
+    ctx.fillStyle = b.colorHex; ctx.font = "9px monospace"; ctx.fillText("✶", tx - 3, ty + 3);
+  }
+  // false clue blip (REVEAL_FALSE) — looks like an anchor, isn't one
+  if (falseBlip) {
+    const [fx, fy] = worldToMap(falseBlip.x, falseBlip.z);
+    ctx.globalAlpha = 0.4 + Math.abs(Math.sin(performance.now() * 0.008)) * 0.5;
+    miniDiamond(fx, fy, 4.5, MINI.crimson, "#ff9aa6");
+    ctx.globalAlpha = 1;
+  }
+  // teammates (LIVE only when NOT absorbed — the void hides them)
+  const crew = netMode ? [...remotePlayers.values()] : bots;
+  for (const b of crew) {
+    if (netMode ? (b.st === "absorbed") : b.absorbed) continue;
     const [bx, by] = worldToMap(b.pos.x, b.pos.z);
     ctx.globalAlpha = b.visible ? 1 : 0.7;
     miniDot(bx, by, b.visible ? 4.5 : 3.5, b.colorHex, b.visible ? "#fff" : null);
@@ -1120,8 +1770,9 @@ function updateAtmosphere(dt) {
   for (let i = 1; i < pos.length; i += 3) { pos[i] += dt * 0.5; if (pos[i] > 9) pos[i] = 0; }
   spores.geometry.attributes.position.needsUpdate = true;
 
-  // tendril breathing
-  for (const t of tendrils) t.rotation.z = t.userData.baseRot + Math.sin(now * 1.2 + t.userData.phase) * 0.15;
+  // tendril breathing — real vertex undulation via the SSS shader (fake-rotation wobble retired)
+  for (const m of vineMaterials) { if (m.uniforms) m.uniforms.uTime.value = now; }
+  if (!VINE_SSS_OK) for (const t of tendrils) t.rotation.z = t.userData.baseRot + Math.sin(now * 1.2 + t.userData.phase) * 0.15;
 
   // unstable flicker lights
   for (const pl of flickerLights) {
@@ -1191,6 +1842,11 @@ function onResize() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  if (composer) {
+    composer.setSize(innerWidth, innerHeight);
+    if (bloomPass) bloomPass.setSize(innerWidth, innerHeight);
+    if (chromaPass) chromaPass.uniforms.uResolution.value.set(innerWidth, innerHeight);
+  }
 }
 
 /* ============================================================
@@ -1204,6 +1860,7 @@ function loop() {
     updatePlayerAnim(dt);
     updatePortals(dt);
     updateBots(dt);
+    if (netMode) { updateRemotePlayers(dt); NET.sendMove(); }
     updateAnchors(dt);
     handleInteract();
     wardenStep(dt);
@@ -1213,7 +1870,10 @@ function loop() {
     drawMinimap();
   }
   if (scene) updateAtmosphere(dt);
-  if (renderer) renderer.render(scene, camera);
+  if (PORTALS_RT && running && !gameOver) renderPortalViews();   // RT see-through portals BEFORE main render
+  updatePostFX(dt);
+  if (composer) composer.render(dt);
+  else if (renderer) renderer.render(scene, camera);
 }
 
 /* ============================================================
@@ -1225,7 +1885,17 @@ function startGame() {
   clock = clock || new THREE.Clock();
   clock.start();
   state.timeLeft = MATCH_SECONDS;
-  sysMsg("you and Mara and Cass fall into the dark. find the anchors. trust your eyes.");
+  // wire chat input (Enter sends; Esc returns focus to the world)
+  const ci = document.getElementById("chatInput");
+  if (ci && !ci._wired) {
+    ci._wired = true;
+    ci.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); sendChatFromInput(); ci.blur(); }
+      else if (e.key === "Escape") { ci.blur(); }
+    });
+  }
+  NET.connect();   // try the relay; if absent, stay single-player with bots
+  sysMsg("you fall into the dark. find the anchors. trust your eyes.");
   setTimeout(() => sysMsg("remember: a message only glows if you can SEE who sent it."), 4500);
 }
 
@@ -1234,7 +1904,7 @@ function fatal(msg) {
   if (sub) sub.textContent = msg;
   const sb = document.querySelector("#start .tag");
   if (sb) sb.innerHTML = `<b style="color:#ff2f44">${msg}</b><br><br>` + sb.innerHTML;
-  console.error("[THRESHOLD]", msg);
+  console.error("[WHISPERS]", msg);
 }
 
 window.addEventListener("load", () => {

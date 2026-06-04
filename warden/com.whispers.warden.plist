@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WHISPERS Warden — always-on macOS LaunchAgent.
+     Survives terminal/session close, auto-restarts on crash.
+     Install:  cp warden/com.whispers.warden.plist ~/Library/LaunchAgents/
+               launchctl load -w ~/Library/LaunchAgents/com.whispers.warden.plist
+     Stop:     launchctl unload ~/Library/LaunchAgents/com.whispers.warden.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.whispers.warden</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/Satyasai/threshold-audit/warden/run-warden.sh</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/Satyasai/threshold-audit/warden</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/Satyasai/threshold-audit/warden/warden.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/Satyasai/threshold-audit/warden/warden.err.log</string>
+</dict>
+</plist>

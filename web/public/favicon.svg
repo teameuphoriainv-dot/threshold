@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="13" fill="#0b0d11"/>
+  <!-- the eye that watches (the Warden) -->
+  <path d="M7 32 Q32 11 57 32 Q32 53 7 32 Z" fill="none" stroke="#ff2f44" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="32" cy="32" r="9.5" fill="#5a0a12"/>
+  <circle cx="32" cy="32" r="9.5" fill="none" stroke="#ff5567" stroke-width="2"/>
+  <!-- slit pupil, faint warm core -->
+  <ellipse cx="32" cy="32" rx="2.4" ry="8.5" fill="#ffd9a8"/>
+</svg>

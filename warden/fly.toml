@@ -1,0 +1,18 @@
+# Fly.io config for the WHISPERS Warden (always-on worker, no inbound HTTP).
+# Deploy:  fly launch --copy-config --now   (or `fly deploy --remote-only`)
+# Secret:  fly secrets set ANTHROPIC_API_KEY=sk-ant-...   (NEVER commit the key)
+app = "whispers-warden"
+primary_region = "iad"
+
+[build]
+
+[env]
+  STDB_URI = "wss://maincloud.spacetimedb.com"
+  STDB_DB = "whispers"
+
+# A single always-on worker machine. Fly restarts it automatically on crash;
+# the module's stale-claim takeover means a fresh process re-claims the Warden.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpus = 1
