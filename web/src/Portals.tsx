@@ -2,7 +2,7 @@ import { useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { type Self } from "./helpers";
-import { fx } from "./fx";
+import { fx, tickAmbient, paintPortalTint, PORTAL_TYPES, type PortalType } from "./fx";
 
 // Non-Euclidean portals after HackerPoet/NonEuclidean. The whole illusion is ONE
 // `delta` matrix per portal connection (delta = dst.LocalToWorld * R180 *
@@ -14,18 +14,29 @@ import { fx } from "./fx";
 // Scale baked into the pair (different door sizes) resizes the player on crossing
 // → bigger-on-the-inside (§7).
 
-type PT = { pos: THREE.Vector3; yaw: number; size: number; color: number };
+type PT = { pos: THREE.Vector3; yaw: number; size: number; type: PortalType };
 const RT = 512;
 const R180 = new THREE.Matrix4().makeRotationY(Math.PI);
 const Y = new THREE.Vector3(0, 1, 0);
+// how far the portal mouth's hum/tint reaches (world units); proximity inside
+// this radius drives the ambient dread + colour wash (see paintPortalTint).
+const HUM_RADIUS = 9;
 
-const PAIRS: { a: PT; b: PT }[] = [
-  // space-fold loop: deep north <-> near spawn
-  { a: { pos: new THREE.Vector3(6, 1.7, -30), yaw: 0, size: 1, color: 0xff3a4e },
-    b: { pos: new THREE.Vector3(0, 1.7, 17), yaw: Math.PI, size: 1, color: 0xff3a4e } },
+// Pair type lives on the PAIR, not the end — both mouths of a connection share
+// one identity, and PORTAL_TYPES (fx.ts) is the SINGLE source of colour/feel.
+const PAIRS: { type: PortalType; a: PT; b: PT }[] = [
+  // space-fold loop: deep north <-> near spawn.
+  // The spawn-side end is pulled OFF the x=0 spawn->convergence corridor
+  // (spawn (0,26) -> convergence (0,4)) so players don't get yanked through
+  // it the instant they walk forward. Tucked east into open floor, facing
+  // back toward the corridor so it still reads as a doorway off the path.
+  { type: "FOLD",
+    a: { pos: new THREE.Vector3(6, 1.7, -30), yaw: 0, size: 1, type: "FOLD" },
+    b: { pos: new THREE.Vector3(13, 1.7, 18), yaw: -Math.PI / 2, size: 1, type: "FOLD" } },
   // SCALE portal (bigger-on-the-inside): small west door <-> large east door
-  { a: { pos: new THREE.Vector3(-34, 1.7, 11), yaw: Math.PI / 2, size: 0.7, color: 0xd1457a },
-    b: { pos: new THREE.Vector3(34, 1.7, -2), yaw: -Math.PI / 2, size: 1.3, color: 0xd1457a } },
+  { type: "SCALE",
+    a: { pos: new THREE.Vector3(-34, 1.7, 11), yaw: Math.PI / 2, size: 0.7, type: "SCALE" },
+    b: { pos: new THREE.Vector3(34, 1.7, -2), yaw: -Math.PI / 2, size: 1.3, type: "SCALE" } },
 ];
 
 const rigid = (p: PT) =>
@@ -63,22 +74,43 @@ export function Portals({ self }: { self: Self }) {
   useFrame((_, dt) => {
     cd.current = Math.max(0, cd.current - dt);
 
-    // ---- teleport: the delta kernel (pos + heading + scale) ----
-    if (cd.current <= 0) {
-      for (const e of ends) {
-        if (Math.hypot(self.x - e.src.pos.x, self.z - e.src.pos.z) < 1.7 * e.src.size) {
-          const delta = new THREE.Matrix4().multiplyMatrices(rigid(e.dst), R180).multiply(rigid(e.src).clone().invert());
-          const np = new THREE.Vector3(self.x, 1.4, self.z).applyMatrix4(delta);
-          self.x = np.x; self.z = np.z;
-          const f = new THREE.Vector3(Math.sin(self.yaw), 0, Math.cos(self.yaw)).transformDirection(delta);
-          self.yaw = Math.atan2(f.x, f.z);
-          self.scale = Math.min(2.5, Math.max(0.4, self.scale * (e.dst.size / e.src.size)));
-          cd.current = 1.0;
-          fx.flash = 0.7; fx.trauma = Math.min(1, fx.trauma + 0.3);
-          break;
-        }
+    // ---- proximity wash + teleport, in one distance pass over the mouths ----
+    // closest dist per pair-type so the colour code is driven by the nearest
+    // portal of each kind; we feed the strongest into paintPortalTint below.
+    let teleported = false;
+    for (const e of ends) {
+      const d = Math.hypot(self.x - e.src.pos.x, self.z - e.src.pos.z);
+
+      // colour/dread wash: 0 at the hum radius, 1 at the mouth (eased). Painting
+      // by TYPE means colour == meaning — red FOLD vs magenta SCALE wash the
+      // ambience differently as you approach, and the dread swells with it.
+      if (d < HUM_RADIUS) {
+        const closeness = 1 - d / HUM_RADIUS;
+        paintPortalTint(e.src.type, closeness * closeness);
+      }
+
+      // teleport: the delta kernel (pos + heading + scale)
+      if (!teleported && cd.current <= 0 && d < 1.7 * e.src.size) {
+        const delta = new THREE.Matrix4().multiplyMatrices(rigid(e.dst), R180).multiply(rigid(e.src).clone().invert());
+        const np = new THREE.Vector3(self.x, 1.4, self.z).applyMatrix4(delta);
+        self.x = np.x; self.z = np.z;
+        const f = new THREE.Vector3(Math.sin(self.yaw), 0, Math.cos(self.yaw)).transformDirection(delta);
+        self.yaw = Math.atan2(f.x, f.z);
+        self.scale = Math.min(2.5, Math.max(0.4, self.scale * (e.dst.size / e.src.size)));
+        cd.current = 1.0;
+        // crossing-specific kick: a brighter flash for the disorienting SCALE
+        // gate (your body resizes) than for the smoother FOLD loop.
+        const cross = e.src.type === "SCALE" ? 0.9 : 0.7;
+        fx.flash = cross; fx.trauma = Math.min(1, fx.trauma + (e.src.type === "SCALE" ? 0.45 : 0.3));
+        teleported = true;
       }
     }
+
+    // own the dread heartbeat: Portals is the single per-frame owner of the
+    // ambient scalar (it already runs every frame and is the thing that paints
+    // the tint). tickAmbient eases ambient toward floor+breath+hot+near and
+    // relaxes the tint/hum we just painted. Runs even if nothing is nearby.
+    tickAmbient(dt);
 
     // ---- see-through render: virtual camera = same delta * main camera ----
     gl.getSize(RES).multiplyScalar(gl.getPixelRatio());
@@ -104,20 +136,21 @@ export function Portals({ self }: { self: Self }) {
 
   return (
     <>
-      {ends.map((e, i) => (
-        <group key={i} position={e.src.pos.toArray()} rotation={[0, e.src.yaw, 0]}>
-          <mesh>
-            <torusGeometry args={[1.5 * e.src.size, 0.16, 10, 36]} />
-            <meshStandardMaterial color={0x10242c} emissive={PAIRS_color(e.src)} emissiveIntensity={1.4} />
-          </mesh>
-          <mesh ref={(m) => { veils.current[i] = m; }} material={veilMats[i]}>
-            <planeGeometry args={[2.6 * e.src.size, 3.2 * e.src.size]} />
-          </mesh>
-          <pointLight color={PAIRS_color(e.src)} intensity={1.2} distance={10} />
-        </group>
-      ))}
+      {ends.map((e, i) => {
+        const t = PORTAL_TYPES[e.src.type]; // color == meaning, from fx.ts
+        return (
+          <group key={i} position={e.src.pos.toArray()} rotation={[0, e.src.yaw, 0]}>
+            <mesh>
+              <torusGeometry args={[1.5 * e.src.size, 0.16, 10, 36]} />
+              <meshStandardMaterial color={0x10242c} emissive={t.ring} emissiveIntensity={t.emissive} toneMapped={false} />
+            </mesh>
+            <mesh ref={(m) => { veils.current[i] = m; }} material={veilMats[i]}>
+              <planeGeometry args={[2.6 * e.src.size, 3.2 * e.src.size]} />
+            </mesh>
+            <pointLight color={t.color} intensity={1.2} distance={10 * e.src.size} />
+          </group>
+        );
+      })}
     </>
   );
 }
-
-function PAIRS_color(p: PT): number { return p.color; }

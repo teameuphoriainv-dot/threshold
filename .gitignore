@@ -7,3 +7,8 @@ server/node_modules/
 
 # launchd warden runtime logs
 warden/*.log
+
+# stray agent/runtime artifacts
+stdb/spacetimedb/agentdb.rvf
+stdb/spacetimedb/agentdb.rvf.lock
+web/.vite/

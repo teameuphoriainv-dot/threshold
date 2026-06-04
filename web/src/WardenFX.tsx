@@ -15,7 +15,10 @@ export function useWardenActions(self: Self, matchId: bigint) {
     if (seen.current < 0) { seen.current = actions.length; return; }
     for (let i = seen.current; i < actions.length; i++) {
       const a = actions[i] as unknown as { actionType: string };
-      if (a?.actionType) dispatchWardenAction(a.actionType, self);
+      // MIMIC is a silent forgery (forged chat only). It must NEVER drive screen
+      // FX or it would telegraph the deception to the whole table. Skip it here as
+      // a defensive guard even if a MIMIC row leaks into the public action log.
+      if (a?.actionType && a.actionType !== "MIMIC") dispatchWardenAction(a.actionType, self);
     }
     seen.current = actions.length;
   }, [actions.length, self]);
@@ -32,6 +35,7 @@ export function WardenEntity({ self }: { self: Self }) {
     fx.glitch = Math.max(0, fx.glitch - dt * 1.4);
     fx.trauma = Math.max(0, fx.trauma - dt * 0.8);
     const m = fx.manifest;
+    // Hard 9s despawn: the entity vanishes the instant its window elapses.
     if (m.active && performance.now() > m.until) { m.active = false; fx.danger = Math.max(0, fx.danger - dt); }
     if (!m.active) fx.danger = Math.max(0, fx.danger - dt * 0.5);
 
@@ -42,17 +46,15 @@ export function WardenEntity({ self }: { self: Self }) {
       camera.position.y += shakeNoise(tt, 5.3) * amt;
     }
 
-    // the entity: stutter-step toward the player while manifested
+    // The entity is a STATIONARY watcher: it spawns at its manifest point and just
+    // stands there staring at the player (slight head waver), never advancing. The
+    // dread is in being watched from a fixed distance, not chased. Danger scales
+    // with how close that fixed spawn happens to be — it no longer creeps up.
     if (fig.current) {
       fig.current.visible = m.active;
       if (m.active) {
-        if (Math.random() < 0.4) {
-          const to = new THREE.Vector3(self.x - fig.current.position.x, 0, self.z - fig.current.position.z).normalize();
-          fig.current.position.x += to.x * 1.6 * dt * 30 * dt;
-          fig.current.position.z += to.z * 1.6 * dt * 30 * dt;
-        }
         fig.current.lookAt(self.x, 3, self.z);
-        fig.current.rotation.y += (Math.random() - 0.5) * 0.12;
+        fig.current.rotation.y += (Math.random() - 0.5) * 0.06;
         const d = Math.hypot(fig.current.position.x - self.x, fig.current.position.z - self.z);
         fx.danger = Math.max(fx.danger, Math.min(0.85, (14 - d) / 14));
       }

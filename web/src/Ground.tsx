@@ -3,7 +3,7 @@ import { useTexture } from "@react-three/drei";
 import * as THREE from "three";
 
 // Alien ground: a displaced plane with a tileable CC0 PBR rock material
-// (Poly Haven, rocky_terrain_02), tinted dark-crimson for the Upside Down.
+// (Poly Haven, rocky_terrain_02), tinted cold teal blue-green for the Upside Down.
 // Real normal + displacement detail, tiles infinitely, ~4MB, instant load.
 // Lighting is left untouched (dim) so it stays dark and mysterious.
 const REPEAT = 16;       // texture tiles across the plane (detail density)
@@ -36,8 +36,8 @@ export function Ground() {
         roughnessMap={rough}
         displacementMap={disp}
         displacementScale={2.6}
-        color={0x55383a}        // dark desaturated crimson tint
-        emissive={0x0a0306}
+        color={0x2e4a47}        // dark desaturated teal blue-green tint (was crimson 0x55383a)
+        emissive={0x03080a}     // cold teal glow (was 0x0a0306)
         roughness={1}
         metalness={0}
       />

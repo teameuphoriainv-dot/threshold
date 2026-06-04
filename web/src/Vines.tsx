@@ -50,9 +50,9 @@ export function Vines() {
       new THREE.ShaderMaterial({
         uniforms: {
           uTime: { value: 0 },
-          uDeep: { value: new THREE.Color(0x2a0a12) },
-          uGlow: { value: new THREE.Color(0xb31226) },
-          uRim: { value: new THREE.Color(0xff3a52) },
+          uDeep: { value: new THREE.Color(0x0a2622) },  // deep teal (was red-purple 0x2a0a12)
+          uGlow: { value: new THREE.Color(0x12b39a) },  // teal blue-green glow (was crimson 0xb31226)
+          uRim: { value: new THREE.Color(0x3affd8) },   // bright teal rim (was red 0xff3a52)
         },
         vertexShader: VERT,
         fragmentShader: FRAG,

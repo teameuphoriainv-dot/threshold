@@ -1,8 +1,9 @@
 :root {
   --panel-bg: rgba(20,12,14,0.74); --panel-border: rgba(170,40,55,0.30);
   --crimson: #ff2f44; --crimson-deep: #b3121f; --crimson-dim: #7a2730;
-  --trust-warm: #ffd9a8; --trust-amber: #ffb86b; --untrust: #ff4d5e; --untrust-dim: #8a4a50;
-  --ink: #e8dcdf; --ink-dim: #9a7e84;
+  /* WCAG AA: dim tones lifted to >=4.5:1 against the dark panels (#140c0e..#0c0e12). */
+  --trust-warm: #ffd9a8; --trust-amber: #ffc486; --untrust: #ff6172; --untrust-dim: #d98a90;
+  --ink: #e8dcdf; --ink-dim: #c2a8ad;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; overflow: hidden; background: #0c0e12; }
@@ -36,14 +37,49 @@ canvas { display: block; }
   pointer-events: none; border: 1px solid rgba(190,30,45,0.45); border-radius: 6px;
   background: rgba(10,4,6,0.66); box-shadow: 0 0 18px rgba(160,0,25,0.22), inset 0 0 26px rgba(120,0,20,0.35);
   backdrop-filter: blur(2px); }
+
+/* HUD mute toggle (from <AudioToggle/>). Sits under the minimap, clickable. */
+#audioToggle { position: fixed; top: 264px; right: 16px; z-index: 11; pointer-events: auto;
+  width: 170px; padding: 6px 0; text-align: center; cursor: pointer;
+  font-family: inherit; font-size: 11px; letter-spacing: 2px; color: var(--ink-dim);
+  background: rgba(10,4,6,0.66); border: 1px solid rgba(190,30,45,0.32); border-radius: 6px;
+  backdrop-filter: blur(2px); transition: color 0.2s, border-color 0.2s, box-shadow 0.2s; }
+#audioToggle:hover { color: var(--ink); border-color: rgba(255,47,68,0.5);
+  box-shadow: 0 0 14px rgba(160,0,25,0.25); }
+#audioToggle[aria-pressed="true"] { color: var(--untrust-dim); border-color: rgba(138,74,80,0.5); }
+#audioToggle:focus-visible { outline: 2px solid var(--crimson); outline-offset: 2px; }
 #interact { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 11;
   color: var(--trust-amber); font-size: 13px; letter-spacing: 2px; pointer-events: none;
   transition: opacity 0.2s; text-shadow: 0 0 10px rgba(0,0,0,0.9); }
 
 #chat { position: fixed; bottom: 16px; left: 16px; width: 360px; z-index: 11; }
-#log { max-height: 220px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+#log { max-height: 220px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;
+  /* let the oldest lines dissolve into nothing at the top edge instead of a hard cut */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 26px); }
 .msg { background: rgba(18,10,12,0.70); border-left: 3px solid #4a2329; padding: 6px 10px; margin-top: 6px;
-  font-size: 13px; line-height: 1.3; }
+  font-size: 13px; line-height: 1.3; will-change: opacity, filter, transform;
+  /* CHAT DECAY: every line materialises with a brief whisper-in, then is slowly
+     pulled "into the dark" — older lines higher in the log fade + desaturate +
+     drift, like a memory you are losing. Newest line is full strength. The
+     fade is driven by :nth-last-child so it tracks scroll position, no JS. */
+  animation: whisperIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: opacity 0.9s ease, filter 0.9s ease, transform 0.9s ease;
+}
+/* memory decay — distance from the newest (last) line dims the older ones.
+   Newest line gets a faint emissive lift so it reads as "the live one". */
+#log .msg:nth-last-child(1) { opacity: 1; box-shadow: -3px 0 10px -4px rgba(255,47,68,0.35); }
+#log .msg:nth-last-child(2) { opacity: 0.9; }
+#log .msg:nth-last-child(3) { opacity: 0.74; filter: saturate(0.82) blur(0.2px); transform: translateX(-1px); }
+#log .msg:nth-last-child(4) { opacity: 0.56; filter: saturate(0.66) blur(0.35px); transform: translateX(-3px); }
+#log .msg:nth-last-child(5) { opacity: 0.40; filter: saturate(0.5) blur(0.55px); transform: translateX(-5px); }
+#log .msg:nth-last-child(6) { opacity: 0.25; filter: saturate(0.38) blur(0.75px); transform: translateX(-7px); }
+#log .msg:nth-last-child(n+7) { opacity: 0.12; filter: saturate(0.22) blur(0.95px); transform: translateX(-10px); }
+@keyframes whisperIn {
+  0%   { opacity: 0; transform: translateX(-12px) skewX(-7deg); filter: blur(3px) brightness(1.7); }
+  55%  { opacity: 1; transform: translateX(1px) skewX(0); filter: blur(0) brightness(1.18); }
+  100% { opacity: 1; transform: translateX(0) skewX(0); filter: none; }
+}
 .msg .name { font-weight: bold; }
 .msg .verified { font-size: 10px; color: var(--trust-warm); margin-left: 6px; letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(255,217,168,0.7); }
@@ -71,3 +107,21 @@ canvas { display: block; }
   color: var(--ink); font-family: inherit; font-size: 16px; outline: none; }
 #joinCode:focus { border-color: var(--crimson); box-shadow: 0 0 12px rgba(255,47,68,0.25); }
 #joinCode::placeholder { color: var(--ink-dim); letter-spacing: 2px; }
+
+/* keyboard accessibility — visible focus ring for interactive controls */
+.btn:focus-visible, #chatInput:focus-visible, #joinCode:focus-visible {
+  outline: 2px solid var(--crimson); outline-offset: 2px; }
+
+/* P0 a11y: honour reduced-motion. Kills CSS transitions/animations and the
+   pulsing/strobing FX overlays (#flash, #danger, #glitch) that can trigger
+   photosensitivity. Components also read this query in JS to stop rAF pulses. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  #flash, #danger, #glitch { display: none !important; }
+  #interact { transition: none !important; }
+}

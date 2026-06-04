@@ -7,7 +7,7 @@ import { tables, reducers, type Player, type ChatMessage } from "./spacetime";
 import { collide, canSee, PLAYER_R } from "./world";
 import { Kit } from "./Kit";
 import { type Self, idHex } from "./helpers";
-import { Anchors, Tethers, InteractionLayer, PromptOverlay, Minimap } from "./Gameplay";
+import { Anchors, Tethers, InteractionLayer, PromptOverlay, Minimap, useUiSounds, GameAudio, AudioToggle } from "./Gameplay";
 import { useWardenActions, WardenEntity, FXOverlays } from "./WardenFX";
 import { Vines } from "./Vines";
 import { Portals } from "./Portals";
@@ -365,6 +365,7 @@ export function Game() {
   const conn = useSpacetimeDB();
   const myId = idHex(conn.identity);
   const selfRef = useRef<Self>({ x: 0, z: 26, yaw: 0, scale: 1 });
+  const sfx = useUiSounds();
 
   const [players] = useTable(tables.player);
   const [matches] = useTable(tables.game_match);
@@ -398,7 +399,7 @@ export function Game() {
     void move({ x, z, yaw, state: "active", carryingAnchorId: undefined });
 
   if (!conn.isActive) return <Screen><h1>WHISPERS</h1><div className="tag">opening a door to the dark…</div></Screen>;
-  if (!inMatch) return <Lobby playerCount={players.length} onCreate={() => void createMatch()} onJoin={(c) => void joinMatch({ code: c })} />;
+  if (!inMatch) return <Lobby playerCount={players.length} onCreate={() => { sfx.unlock(); void createMatch(); }} onJoin={(c) => { sfx.unlock(); void joinMatch({ code: c }); }} />;
   if (state === "lobby") return <WaitingRoom code={myMatch?.code ?? "…"} players={matchPlayers} myId={myId} onStart={() => void startMatch()} onLeave={() => void leaveMatch()} />;
   if (state === "won" || state === "lost") return <EndScreen won={state === "won"} onLeave={() => void leaveMatch()} />;
 
@@ -407,7 +408,7 @@ export function Game() {
       <Canvas camera={{ fov: 62, near: 0.1, far: 400, position: [0, 4.2, 32] }}>
         <Scene self={selfRef.current} players={matchPlayers} myId={myId} onMove={onMove}
           anchors={anchors} tethers={tethers}
-          pickup={(id) => void pickup({ anchorId: id })}
+          pickup={(id) => { sfx.pickup(); void pickup({ anchorId: id }); }}
           place={(id) => void place({ anchorId: id })}
           rescue={(id) => void rescue({ tetherId: id })} />
       </Canvas>
@@ -416,6 +417,8 @@ export function Game() {
       <Chat chat={chat} players={matchPlayers} myId={myId} self={selfRef.current} sendChat={(t) => void sendChat({ text: t })} />
       <PromptOverlay />
       <FXOverlays />
+      <GameAudio chatLength={chat.length} state={{ anchorsPlaced, tetherCount: tethers.length, exitOpen, outcome: state }} />
+      <AudioToggle />
       <div id="vignette" />
     </>
   );
