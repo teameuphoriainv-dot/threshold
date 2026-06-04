@@ -348,12 +348,14 @@ pub fn warden_mimic(ctx: &ReducerContext, match_id: u64, victim: Identity, text:
     if !is_warden_of(ctx, &m) { return; }
     let v = match ctx.db.player().identity().find(victim) { Some(v) => v, None => return };
     if v.match_id != match_id { return; }
-    let name = v.name.clone();
+    // NO warden_action row for MIMIC: a public warden_action would reveal to any
+    // subscribed client that this message was forged (and name the victim),
+    // defeating the core deception. The forged chat_message must be
+    // indistinguishable from a real one — trust breaks only via line-of-sight.
     ctx.db.chat_message().insert(ChatMessage {
         id: 0, match_id, sender: victim, sender_name: v.name, sender_color: v.color,
         text: text.chars().take(240).collect(), created_at: ctx.timestamp,
     });
-    ctx.db.warden_action().insert(WardenAction { id: 0, match_id, action_type: "MIMIC".to_string(), target: name, created_at: ctx.timestamp });
 }
 
 #[spacetimedb::reducer]
