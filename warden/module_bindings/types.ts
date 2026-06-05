@@ -10,6 +10,22 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const Account = __t.object("Account", {
+  username: __t.string(),
+  pinHash: __t.string(),
+  salt: __t.string(),
+  identity: __t.identity(),
+  name: __t.string(),
+  color: __t.u32(),
+  build: __t.u8(),
+  hood: __t.u8(),
+  marking: __t.u8(),
+  emissiveIntensity: __t.f32(),
+  height: __t.f32(),
+  created: __t.timestamp(),
+});
+export type Account = __Infer<typeof Account>;
+
 export const Anchor = __t.object("Anchor", {
   id: __t.u64(),
   matchId: __t.u64(),
@@ -20,6 +36,11 @@ export const Anchor = __t.object("Anchor", {
   placed: __t.bool(),
 });
 export type Anchor = __Infer<typeof Anchor>;
+
+export const AvatarDone = __t.object("AvatarDone", {
+  identity: __t.identity(),
+});
+export type AvatarDone = __Infer<typeof AvatarDone>;
 
 export const ChatMessage = __t.object("ChatMessage", {
   id: __t.u64(),
@@ -57,6 +78,11 @@ export const Player = __t.object("Player", {
   state: __t.string(),
   carryingAnchorId: __t.option(__t.u64()),
   lastSeen: __t.timestamp(),
+  build: __t.u8(),
+  hood: __t.u8(),
+  marking: __t.u8(),
+  emissiveIntensity: __t.f32(),
+  height: __t.f32(),
 });
 export type Player = __Infer<typeof Player>;
 

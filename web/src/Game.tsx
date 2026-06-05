@@ -397,8 +397,10 @@ export function Game() {
   const meAvatar = me ? avatarFromPlayer(me) : DEFAULT_AVATAR;
   const meColor = me?.color ?? DEFAULT_AVATAR.color;
 
-  const onMove = (x: number, z: number, yaw: number) =>
-    void move({ x, z, yaw, state: "active", carryingAnchorId: undefined });
+  const onMove = (x: number, z: number, yaw: number) => {
+    if (me?.state === "absorbed") return;   // absorbed = frozen in the Warden's void
+    void move({ x, z, yaw });               // server-authoritative: state/carry preserved server-side
+  };
 
   if (!introSeen) return <Lore variant="intro" onContinue={() => { sfx.unlock(); setIntroSeen(true); }} onSkip={() => { sfx.unlock(); setIntroSeen(true); }} seed={chat.length} />;
   if (!conn.isActive) return <Screen><h1>WHISPERS</h1><div className="tag">opening a door to the dark…</div></Screen>;
@@ -435,6 +437,7 @@ export function Game() {
       <FXOverlays />
       <GameAudio chatLength={chat.length} state={{ anchorsPlaced, tetherCount: tethers.length, exitOpen, outcome: state }} />
       <AudioToggle />
+      {me?.state === "absorbed" && <Lore variant="absorbed" onContinue={() => {}} seed={chat.length} />}
       <div id="vignette" />
     </>
   );

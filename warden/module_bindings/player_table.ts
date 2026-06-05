@@ -21,4 +21,9 @@ export default __t.row({
   state: __t.string(),
   carryingAnchorId: __t.option(__t.u64()).name("carrying_anchor_id"),
   lastSeen: __t.timestamp().name("last_seen"),
+  build: __t.u8(),
+  hood: __t.u8(),
+  marking: __t.u8(),
+  emissiveIntensity: __t.f32().name("emissive_intensity"),
+  height: __t.f32(),
 });

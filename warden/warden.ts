@@ -17,6 +17,13 @@ const URI = process.env.STDB_URI || "wss://maincloud.spacetimedb.com";
 const DB = process.env.STDB_DB || "whispers-live";
 if (!KEY) { console.error("Missing ANTHROPIC_API_KEY in warden/.env"); process.exit(1); }
 
+// A single malformed frame (e.g. a schema/bindings drift) must NOT hard-kill the
+// adversary into a busy launchd restart loop. Log and keep running — the next
+// subscription delta or tick recovers. (The real fix is keeping module_bindings in
+// sync with lib.rs; this is the safety net so one bad row never downs the Warden.)
+process.on("uncaughtException", (e) => console.error("[warden] uncaughtException:", (e as Error)?.message || e));
+process.on("unhandledRejection", (e) => console.error("[warden] unhandledRejection:", (e as { message?: string })?.message || e));
+
 // maxRetries:1 (SDK default is 2): one retry on transient failure, then fail fast.
 // A long retry chain would otherwise outlive the per-request timeout budget below.
 const anthropic = new Anthropic({ apiKey: KEY, maxRetries: 1 });

@@ -445,9 +445,13 @@ pub fn start_match(ctx: &ReducerContext) {
 // ============================================================
 
 #[spacetimedb::reducer]
-pub fn move_player(ctx: &ReducerContext, x: f32, z: f32, yaw: f32, state: String, carrying_anchor_id: Option<u64>) {
+pub fn move_player(ctx: &ReducerContext, x: f32, z: f32, yaw: f32) {
+    // SERVER-AUTHORITATIVE: the client may only move. `state` (active/absorbed) and
+    // `carrying_anchor_id` are owned by absorb/rescue/pickup/place and preserved via
+    // the row spread (..p), so a 15Hz move tick can no longer un-absorb a player or
+    // silently drop a carry (the two bugs that broke the absorb + carry loops).
     if let Some(p) = ctx.db.player().identity().find(ctx.sender()) {
-        ctx.db.player().identity().update(Player { x, z, yaw, state, carrying_anchor_id, last_seen: ctx.timestamp, ..p });
+        ctx.db.player().identity().update(Player { x, z, yaw, last_seen: ctx.timestamp, ..p });
     }
 }
 
@@ -489,7 +493,10 @@ pub fn place_anchor(ctx: &ReducerContext, anchor_id: u64) {
     ctx.db.anchor().id().update(Anchor { carried_by: None, placed: true, ..a });
     let placed = m.anchors_placed + 1;
     let exit = placed >= 3;
-    ctx.db.game_match().id().update(GameMatch { anchors_placed: placed, exit_open: exit, ..m });
+    // The loop was UNWINNABLE: exit_open was set but no reducer ever set "won".
+    // Placing the final real anchor opens the way AND completes the escape.
+    let state = if exit { "won".to_string() } else { m.state.clone() };
+    ctx.db.game_match().id().update(GameMatch { anchors_placed: placed, exit_open: exit, state, ..m });
 }
 
 #[spacetimedb::reducer]
