@@ -1,0 +1,111 @@
+/* ============================================================
+   CUSTOMIZER — self-contained styling for the avatar panel.
+   Reuses the WHISPERS palette vars from index.css (--crimson, --ink…)
+   with safe fallbacks so it renders even if loaded standalone.
+   ============================================================ */
+
+.cz-root {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 18px;
+  text-align: left;
+  font-family: "Courier New", ui-monospace, monospace;
+  color: var(--ink, #e8dcdf);
+  width: min(640px, 86vw);
+  max-height: 70vh;
+}
+.cz-root.cz-compact { grid-template-columns: 1fr; max-height: 60vh; }
+
+.cz-preview {
+  background: radial-gradient(circle at 50% 35%, rgba(40,20,26,0.6), rgba(10,8,11,0.9));
+  border: 1px solid var(--panel-border, rgba(170,40,55,0.30));
+  border-radius: 12px;
+  min-height: 280px;
+  overflow: hidden;
+}
+.cz-compact .cz-preview { min-height: 200px; }
+
+.cz-controls {
+  overflow-y: auto;
+  padding-right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cz-controls::-webkit-scrollbar { width: 6px; }
+.cz-controls::-webkit-scrollbar-thumb { background: var(--crimson-dim, #7a2730); border-radius: 3px; }
+
+.cz-title {
+  font-size: 12px; letter-spacing: 4px; color: var(--crimson, #ff2f44);
+  text-shadow: 0 0 12px rgba(255,47,68,0.5);
+}
+
+.cz-field { display: flex; flex-direction: column; gap: 5px; }
+.cz-label {
+  font-size: 10px; letter-spacing: 2px; color: var(--ink-dim, #c2a8ad);
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.cz-val { color: var(--trust-amber, #ffc486); font-size: 11px; letter-spacing: 1px; }
+.cz-desc { font-size: 10px; color: var(--untrust-dim, #d98a90); font-style: italic; line-height: 1.4; }
+
+/* text inputs */
+.cz-text {
+  background: rgba(12,6,8,0.78);
+  border: 1px solid var(--panel-border, rgba(170,40,55,0.30));
+  color: var(--ink, #e8dcdf);
+  padding: 7px 10px; border-radius: 6px; font-family: inherit; font-size: 12px;
+  letter-spacing: 1px; width: 100%;
+}
+.cz-text:focus { outline: none; border-color: var(--crimson, #ff2f44); box-shadow: 0 0 10px rgba(255,47,68,0.25); }
+.cz-text::placeholder { color: var(--ink-dim, #c2a8ad); opacity: 0.6; }
+
+/* option chips */
+.cz-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cz-chip {
+  background: rgba(20,12,14,0.7);
+  border: 1px solid var(--panel-border, rgba(170,40,55,0.30));
+  color: var(--ink-dim, #c2a8ad);
+  padding: 5px 11px; border-radius: 20px; font-family: inherit; font-size: 11px;
+  letter-spacing: 1px; cursor: pointer; transition: all 0.12s;
+}
+.cz-chip:hover { color: var(--ink, #e8dcdf); border-color: rgba(255,47,68,0.5); }
+.cz-chip.sel {
+  color: var(--trust-warm, #ffd9a8); border-color: var(--crimson, #ff2f44);
+  background: rgba(120,16,28,0.45); box-shadow: 0 0 10px rgba(255,47,68,0.25);
+}
+
+/* color swatches */
+.cz-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.cz-swatch {
+  width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+  border: 2px solid transparent; padding: 0; transition: transform 0.1s;
+}
+.cz-swatch:hover { transform: scale(1.12); }
+.cz-swatch.sel { border-color: var(--ink, #e8dcdf); box-shadow: 0 0 12px currentColor; transform: scale(1.12); }
+
+/* sliders */
+.cz-slider { width: 100%; accent-color: var(--crimson, #ff2f44); cursor: pointer; }
+
+/* live toggle + apply */
+.cz-live {
+  display: flex; align-items: center; gap: 7px; font-size: 11px;
+  color: var(--ink-dim, #c2a8ad); letter-spacing: 1px; cursor: pointer;
+}
+.cz-live input { accent-color: var(--crimson, #ff2f44); }
+.cz-apply { margin-top: 4px; width: 100%; }
+.cz-apply:disabled { opacity: 0.5; cursor: default; }
+
+/* account block */
+.cz-account {
+  margin-top: 6px; padding-top: 12px;
+  border-top: 1px dashed var(--panel-border, rgba(170,40,55,0.30));
+}
+.cz-auth-toggle { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 11px; color: var(--ink-dim, #c2a8ad); }
+.cz-auth-form { display: flex; flex-direction: column; gap: 8px; }
+.cz-auth-actions { display: flex; gap: 12px; align-items: center; }
+.cz-link {
+  background: none; border: none; color: var(--trust-amber, #ffc486); cursor: pointer;
+  font-family: inherit; font-size: 11px; letter-spacing: 1px; text-decoration: underline; padding: 0;
+}
+.cz-link:hover { color: var(--trust-warm, #ffd9a8); }
+.cz-err { font-size: 10px; color: var(--untrust, #ff6172); letter-spacing: 1px; }

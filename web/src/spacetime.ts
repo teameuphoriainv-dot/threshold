@@ -12,6 +12,8 @@ export interface Player {
   identity: Identityish; name: string; color: number; matchId: bigint;
   x: number; z: number; yaw: number;
   state: string; carryingAnchorId?: bigint;
+  // additive avatar columns (set_avatar); optional so older rows stay compatible
+  build?: number; hood?: number; marking?: number; emissiveIntensity?: number; height?: number;
 }
 export interface GameMatch {
   id: bigint; code: string; state: string; phase: number;

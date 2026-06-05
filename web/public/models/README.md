@@ -27,3 +27,22 @@ npx @gltf-transform/cli optimize raw.glb web/public/models/NAME.glb \
 Then reference it (single slot) or add to `PROP_MODELS[]`.
 
 Note: draco decoded via drei's CDN decoder at runtime (needs network).
+
+## Character model (rigged player avatar)
+
+`survivor.glb` — wired by `web/src/Character.tsx` (default `<Character>` for the
+local + remote players, named `<Character>` for the Customizer preview). A rigged
+humanoid with one skin and one walk-cycle clip; the skeleton is cloned per player
+(three `SkeletonUtils.clone`) and the clip is full-speed when moving, time-scaled
+to a near-frozen idle otherwise. All materials are overridden in code (no source
+`map`), so the model's bundled logo texture never renders — the body is recolored
+to the shadowed survivor look tinted by each player's `AvatarConfig`.
+
+| File           | Source (Khronos glTF-Sample-Assets) | License   | Attribution            |
+|----------------|-------------------------------------|-----------|------------------------|
+| `survivor.glb` | CesiumMan                           | CC-BY 4.0 | © 2017, Cesium — CC-BY 4.0 |
+
+Alternative (cleaner license, no trademark): **RiggedFigure** (Khronos
+glTF-Sample-Assets, CC-BY 4.0). Same topology; its single clip is a subtle idle
+rather than a walk, so locomotion reads less clearly — CesiumMan was chosen for
+the real walk cycle, and its trademark texture is fully overridden in code.

@@ -1,6 +1,10 @@
-import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { EffectComposer, Bloom, Vignette, ChromaticAberration } from "@react-three/postprocessing";
+import { Atmosphere } from "./Atmosphere";
+import CharacterPlayer, { CapsuleFallback, preloadCharacter } from "./Character";
+import { Customizer } from "./Customizer";
+import { Lore } from "./LoreScreens";
+import { avatarFromPlayer, avatarToReducerArgs, DEFAULT_AVATAR, type AvatarConfig } from "./avatar";
 import * as THREE from "three";
 import { useSpacetimeDB, useTable, useReducer } from "spacetimedb/react";
 import { tables, reducers, type Player, type ChatMessage } from "./spacetime";
@@ -15,6 +19,18 @@ import { Ground } from "./Ground";
 
 // ---------- keyboard ----------
 const keys: Record<string, boolean> = {};
+
+// Warm the rigged-avatar GLB into drei's cache before first render.
+preloadCharacter();
+
+// Avatar render guard: a hard GLB decode failure falls back to the capsule
+// instead of blanking the canvas. Suspense already covers the pending frame.
+class AvatarBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() { return this.state.failed ? this.props.fallback : this.props.children; }
+}
+
 function useKeyboard() {
   useEffect(() => {
     const isChat = () => document.activeElement?.id === "chatInput";
@@ -51,6 +67,9 @@ function World() {
     <group>
       <ambientLight intensity={0.85} color={0x3a3640} />
       <hemisphereLight args={[0x44343a, 0x100a0c, 0.75]} />
+      {/* dim cold moonlight from high overhead — reveals the ground without killing the dread */}
+      <directionalLight position={[18, 34, 10]} intensity={0.55} color={0x6a7e8c} />
+      <pointLight position={[0, 14, 0]} color={0x46525e} intensity={0.6} distance={70} decay={1.4} />
       {/* ground — alien landscape tiles (fog hides the far edges). Fallback = flat floor while the GLB loads. */}
       <Suspense fallback={
         <mesh rotation-x={-Math.PI / 2}>
@@ -88,9 +107,11 @@ function World() {
 // ============================================================
 //  LOCAL PLAYER — movement, third-person camera, move reducer @15Hz
 // ============================================================
-function LocalPlayer({ self, onMove }: { self: Self; onMove: (x: number, z: number, yaw: number) => void }) {
+function LocalPlayer({ self, onMove, avatar, color }: { self: Self; onMove: (x: number, z: number, yaw: number) => void; avatar: AvatarConfig; color: number }) {
   const body = useRef<THREE.Group>(null);
   const vel = useRef({ x: 0, z: 0 });
+  const movingRef = useRef(false);
+  const [moving, setMoving] = useState(false);
   const { camera, gl } = useThree();
   const lastSent = useRef(0);
 
@@ -126,6 +147,8 @@ function LocalPlayer({ self, onMove }: { self: Self; onMove: (x: number, z: numb
     [nx, nz] = collide(nx, nz, PLAYER_R);
     self.x = nx; self.z = nz;
     if (body.current) { body.current.position.set(nx, 0, nz); body.current.rotation.y = Math.atan2(fwd.x, fwd.z); body.current.scale.setScalar(sc); }
+    const isMoving = vel.current.x * vel.current.x + vel.current.z * vel.current.z > 0.5;
+    if (isMoving !== movingRef.current) { movingRef.current = isMoving; setMoving(isMoving); }
 
     // third-person camera (scales with player size — the bigger-on-the-inside cue)
     const camDist = 6.2 * sc, camH = 4.2 * sc;
@@ -140,11 +163,11 @@ function LocalPlayer({ self, onMove }: { self: Self; onMove: (x: number, z: numb
 
   return (
     <group ref={body} position={[self.x, 0, self.z]}>
-      <mesh position-y={1}>
-        <capsuleGeometry args={[0.45, 1.15, 4, 10]} />
-        <meshStandardMaterial color={0x1c1814} emissive={0xc77a3a} emissiveIntensity={0.45} roughness={0.5} />
-      </mesh>
-      <pointLight position-y={1.3} color={0xffb066} intensity={1.6} distance={9} />
+      <AvatarBoundary fallback={<CapsuleFallback color={color} />}>
+        <Suspense fallback={<CapsuleFallback color={color} />}>
+          <CharacterPlayer config={avatar} color={color} moving={moving} selfGlow />
+        </Suspense>
+      </AvatarBoundary>
     </group>
   );
 }
@@ -164,19 +187,28 @@ function RemotePlayers({ players, myId, self }: { players: readonly Player[]; my
 function RemoteBody({ p, self }: { p: Player; self: Self }) {
   const g = useRef<THREE.Group>(null);
   const light = useRef<THREE.PointLight>(null);
+  const prev = useRef({ x: p.x, z: p.z });
+  const movingRef = useRef(false);
+  const [moving, setMoving] = useState(false);
   useFrame(() => {
     if (!g.current) return;
     g.current.position.lerp(new THREE.Vector3(p.x, 0, p.z), 0.2);
     g.current.rotation.y = p.yaw;
     const seen = canSee(self.x, self.z, self.yaw, p.x, p.z);
     if (light.current) light.current.intensity = 1.0 + (seen ? 0.9 : 0);
+    const d = (p.x - prev.current.x) ** 2 + (p.z - prev.current.z) ** 2;
+    prev.current = { x: p.x, z: p.z };
+    const m = d > 0.0004;
+    if (m !== movingRef.current) { movingRef.current = m; setMoving(m); }
   });
   return (
     <group ref={g} position={[p.x, 0, p.z]}>
-      <mesh position-y={1}>
-        <cylinderGeometry args={[0.45, 0.45, 1.8, 10]} />
-        <meshStandardMaterial color={0x111418} emissive={p.color} emissiveIntensity={0.4} roughness={0.6} />
-      </mesh>
+      <AvatarBoundary fallback={<CapsuleFallback color={p.color} />}>
+        <Suspense fallback={<CapsuleFallback color={p.color} />}>
+          <CharacterPlayer config={avatarFromPlayer(p)} color={p.color} moving={moving} />
+        </Suspense>
+      </AvatarBoundary>
+      {/* LOS trust cue — brightens when this teammate is in your sight */}
       <pointLight ref={light} position-y={1.2} color={p.color} intensity={1.3} distance={7} />
     </group>
   );
@@ -189,14 +221,14 @@ type SceneProps = {
   self: Self; players: readonly Player[]; myId: string; onMove: (x: number, z: number, yaw: number) => void;
   anchors: readonly import("./spacetime").Anchor[]; tethers: readonly import("./spacetime").Tether[];
   pickup: (id: bigint) => void; place: (id: bigint) => void; rescue: (id: bigint) => void;
+  meAvatar: AvatarConfig; meColor: number;
 };
-function Scene({ self, players, myId, onMove, anchors, tethers, pickup, place, rescue }: SceneProps) {
+function Scene({ self, players, myId, onMove, anchors, tethers, pickup, place, rescue, meAvatar, meColor }: SceneProps) {
   return (
     <>
-      <fogExp2 attach="fog" args={[0x1c2129, 0.022]} />
-      <color attach="background" args={[0x161a21]} />
+      <Atmosphere />
       <World />
-      <LocalPlayer self={self} onMove={onMove} />
+      <LocalPlayer self={self} onMove={onMove} avatar={meAvatar} color={meColor} />
       <RemotePlayers players={players} myId={myId} self={self} />
       <Anchors anchors={anchors} myId={myId} self={self} />
       <Tethers tethers={tethers} />
@@ -204,11 +236,6 @@ function Scene({ self, players, myId, onMove, anchors, tethers, pickup, place, r
       <WardenEntity self={self} />
       <InteractionLayer anchors={anchors} tethers={tethers} players={players} myId={myId} self={self}
         pickup={pickup} place={place} rescue={rescue} />
-      <EffectComposer>
-        <Bloom intensity={0.9} luminanceWhispers={0.5} luminanceSmoothing={0.4} mipmapBlur />
-        <ChromaticAberration offset={[0.0006, 0.0006]} />
-        <Vignette eskil={false} offset={0.25} darkness={0.95} />
-      </EffectComposer>
     </>
   );
 }
@@ -324,7 +351,7 @@ function Lobby({ playerCount, onCreate, onJoin }: { playerCount: number; onCreat
   );
 }
 
-function WaitingRoom({ code, players, myId, onStart, onLeave }: { code: string; players: readonly Player[]; myId: string; onStart: () => void; onLeave: () => void }) {
+function WaitingRoom({ code, players, myId, onStart, onLeave, customizer }: { code: string; players: readonly Player[]; myId: string; onStart: () => void; onLeave: () => void; customizer?: ReactNode }) {
   return (
     <Screen>
       <h1>WHISPERS</h1>
@@ -337,22 +364,9 @@ function WaitingRoom({ code, players, myId, onStart, onLeave }: { code: string; 
           </div>
         ))}
       </div>
+      {customizer}
       <div className="btn" onClick={onStart}>ENTER THE WHISPERS</div>
       <div style={{ marginTop: 12, fontSize: 11, color: "#7a2730", cursor: "pointer" }} onClick={onLeave}>← back to lobby</div>
-    </Screen>
-  );
-}
-
-function EndScreen({ won, onLeave }: { won: boolean; onLeave: () => void }) {
-  return (
-    <Screen>
-      <h1 style={{ color: won ? "#ff9a86" : "#ff2f44" }}>{won ? "ESCAPED" : "TAKEN"}</h1>
-      <div className="tag">
-        {won
-          ? "You crossed back. Whatever wore your friends' voices is still down there — but you are out, together."
-          : "The dark kept what it caught. Somewhere, your voice is still talking — but it is not you speaking."}
-      </div>
-      <div className="btn" onClick={onLeave}>CROSS AGAIN</div>
     </Screen>
   );
 }
@@ -366,6 +380,7 @@ export function Game() {
   const myId = idHex(conn.identity);
   const selfRef = useRef<Self>({ x: 0, z: 26, yaw: 0, scale: 1 });
   const sfx = useUiSounds();
+  const [introSeen, setIntroSeen] = useState(false);
 
   const [players] = useTable(tables.player);
   const [matches] = useTable(tables.game_match);
@@ -389,25 +404,33 @@ export function Game() {
   const pickup = useReducer(reducers.pickupAnchor);
   const place = useReducer(reducers.placeAnchor);
   const rescue = useReducer(reducers.rescue);
+  const setAvatar = useReducer(reducers.setAvatar);
+  const setName = useReducer(reducers.setName);
 
   const matchPlayers = players.filter((p) => p.matchId === mid);
   const state = myMatch?.state ?? "lobby";
   const anchorsPlaced = myMatch ? Number(myMatch.anchorsPlaced) : 0;
   const exitOpen = myMatch ? myMatch.exitOpen : false;
+  const meAvatar = me ? avatarFromPlayer(me) : DEFAULT_AVATAR;
+  const meColor = me?.color ?? DEFAULT_AVATAR.color;
 
   const onMove = (x: number, z: number, yaw: number) =>
     void move({ x, z, yaw, state: "active", carryingAnchorId: undefined });
 
+  if (!introSeen) return <Lore variant="intro" onContinue={() => { sfx.unlock(); setIntroSeen(true); }} onSkip={() => { sfx.unlock(); setIntroSeen(true); }} seed={chat.length} />;
   if (!conn.isActive) return <Screen><h1>WHISPERS</h1><div className="tag">opening a door to the dark…</div></Screen>;
   if (!inMatch) return <Lobby playerCount={players.length} onCreate={() => { sfx.unlock(); void createMatch(); }} onJoin={(c) => { sfx.unlock(); void joinMatch({ code: c }); }} />;
-  if (state === "lobby") return <WaitingRoom code={myMatch?.code ?? "…"} players={matchPlayers} myId={myId} onStart={() => void startMatch()} onLeave={() => void leaveMatch()} />;
-  if (state === "won" || state === "lost") return <EndScreen won={state === "won"} onLeave={() => void leaveMatch()} />;
+  if (state === "lobby") return <WaitingRoom code={myMatch?.code ?? "…"} players={matchPlayers} myId={myId} onStart={() => void startMatch()} onLeave={() => void leaveMatch()}
+    customizer={<Customizer compact initial={meAvatar} currentName={me?.name} onApply={(cfg) => void setAvatar(avatarToReducerArgs(cfg))} onSetName={(n) => void setName({ name: n })} />} />;
+  if (state === "won" || state === "lost") return <Lore variant="end" outcome={state === "won" ? "won" : "lost"} onContinue={() => void leaveMatch()} seed={chat.length} />;
 
   return (
     <>
-      <Canvas camera={{ fov: 62, near: 0.1, far: 400, position: [0, 4.2, 32] }}>
+      <Canvas shadows dpr={[1, 1.75]}
+        gl={{ antialias: false, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
+        camera={{ fov: 62, near: 0.1, far: 400, position: [0, 4.2, 32] }}>
         <Scene self={selfRef.current} players={matchPlayers} myId={myId} onMove={onMove}
-          anchors={anchors} tethers={tethers}
+          anchors={anchors} tethers={tethers} meAvatar={meAvatar} meColor={meColor}
           pickup={(id) => { sfx.pickup(); void pickup({ anchorId: id }); }}
           place={(id) => void place({ anchorId: id })}
           rescue={(id) => void rescue({ tetherId: id })} />

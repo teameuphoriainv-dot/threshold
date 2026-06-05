@@ -17,9 +17,11 @@ const URI = process.env.STDB_URI || "wss://maincloud.spacetimedb.com";
 const DB = process.env.STDB_DB || "whispers-live";
 if (!KEY) { console.error("Missing ANTHROPIC_API_KEY in warden/.env"); process.exit(1); }
 
-const anthropic = new Anthropic({ apiKey: KEY });
+// maxRetries:1 (SDK default is 2): one retry on transient failure, then fail fast.
+// A long retry chain would otherwise outlive the per-request timeout budget below.
+const anthropic = new Anthropic({ apiKey: KEY, maxRetries: 1 });
 const TICK_MS = 12000;
-const DECIDE_TIMEOUT_MS = 9000; // never let a slow Claude call stall a tick
+const DECIDE_TIMEOUT_MS = 8000; // never let a slow Claude call stall a tick
 // matches with a Claude decision currently in flight — guards against overlap if
 // a previous tick's request hasn't resolved by the time the next tick fires.
 const inflight = new Set<string>();
@@ -41,13 +43,14 @@ let myIdHex = "";
 
 const hx = (id: any): string => (id && typeof id.toHexString === "function" ? id.toHexString() : String(id));
 
-// Reject after `ms` so a hung Claude call can never stall a Warden tick. The
-// underlying request is abandoned (the SDK promise is left to settle/GC).
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms);
-    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
-  });
+// Abort after `ms` so a hung Claude call can never stall a Warden tick. Unlike a
+// bare promise race, the AbortSignal actually CANCELS the in-flight HTTP request
+// (passed to messages.create as `signal`), so we don't leak a live socket per tick.
+// Caller must invoke `done()` in a finally to clear the timer once the call settles.
+function abortTimeout(ms: number): { signal: AbortSignal; done: () => void } {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(new Error(`timeout after ${ms}ms`)), ms);
+  return { signal: ac.signal, done: () => clearTimeout(t) };
 }
 
 function upPlayer(row: any) {
@@ -272,9 +275,10 @@ async function decideForMatch(m: M) {
 
   inflight.add(key);
   let input: any = null;
+  const timer = abortTimeout(DECIDE_TIMEOUT_MS);
   try {
-    const res = await withTimeout(
-      anthropic.messages.create({
+    const res = await anthropic.messages.create(
+      {
         model: "claude-haiku-4-5",
         max_tokens: 280,
         tools: [ACTION_TOOL],
@@ -284,8 +288,11 @@ async function decideForMatch(m: M) {
         // each tick, so caching it would never hit and just add overhead.)
         system: [{ type: "text", text: WARDEN_PERSONA, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: userMsg }],
-      }),
-      DECIDE_TIMEOUT_MS,
+      },
+      // 8s abort budget: cancels the underlying request on timeout. maxRetries is 1
+      // (per-request override, in case the client default ever changes) so a stalled
+      // call can't silently consume the whole tick on retries.
+      { signal: timer.signal, maxRetries: 1 },
     );
     input = (res.content.find((c: any) => c.type === "tool_use") as any)?.input || {};
   } catch (e: any) {
@@ -302,7 +309,8 @@ async function decideForMatch(m: M) {
     } catch { /* mid-reconnect */ }
     return;
   } finally {
-    inflight.delete(key);
+    timer.done();        // clear the abort timer so it can't fire after we settle
+    inflight.delete(key); // release the in-flight guard for the next tick
   }
 
   // EXACT target match only, AND only among the forgeable set. If the model names a

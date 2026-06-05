@@ -37,7 +37,7 @@ export function Ground() {
         displacementMap={disp}
         displacementScale={2.6}
         color={0x2e4a47}        // dark desaturated teal blue-green tint (was crimson 0x55383a)
-        emissive={0x03080a}     // cold teal glow (was 0x0a0306)
+        emissive={0x0a141a}     // cold teal self-glow so the floor reads through the fog
         roughness={1}
         metalness={0}
       />

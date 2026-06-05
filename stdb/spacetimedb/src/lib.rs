@@ -49,6 +49,36 @@ pub struct Player {
     pub state: String,          // "active" | "absorbed"
     pub carrying_anchor_id: Option<u64>,
     pub last_seen: Timestamp,
+    // ----- avatar columns (ADDITIVE; defaulted at every insert) -----
+    pub build: u8,              // body build index (BUILDS)
+    pub hood: u8,               // headwear index (HOODS)
+    pub marking: u8,            // marking/sigil index (MARKINGS)
+    pub emissive_intensity: f32,// glow strength
+    pub height: f32,            // height scale
+}
+
+/// Username+PIN account. ADDITIVE, self-contained auth that binds a chosen
+/// username -> avatar profile -> the caller's current connection `identity`.
+/// `public` so the client can subscribe to its own row (where identity == me);
+/// `pin_hash`/`salt` are exposed to subscribers but the hash is non-reversible
+/// and the where-clause keeps each client to its own row — acceptable for a
+/// self-contained game PIN with no real-world value.
+#[spacetimedb::table(accessor = account, public)]
+pub struct Account {
+    #[primary_key]
+    pub username: String,
+    pub pin_hash: String,
+    pub salt: String,
+    #[index(btree)]
+    pub identity: Identity,
+    pub name: String,
+    pub color: u32,
+    pub build: u8,
+    pub hood: u8,
+    pub marking: u8,
+    pub emissive_intensity: f32,
+    pub height: f32,
+    pub created: Timestamp,
 }
 
 /// Anchors — real or fake (the Warden's lure). Scoped to a match.
@@ -116,6 +146,46 @@ const COLORS: [u32; 8] = [0xff9a5c, 0xffc46b, 0xff7a8a, 0xffd27a, 0xc98bff, 0x7a
 const CODE_ALPHA: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars
 const WARDEN_STALE_MICROS: i64 = 30_000_000; // 30s
 
+// ----- avatar column defaults (mirror DEFAULT_AVATAR in web/src/avatar.ts) ----
+const DEF_BUILD: u8 = 1;
+const DEF_HOOD: u8 = 0;
+const DEF_MARKING: u8 = 0;
+const DEF_EMISSIVE: f32 = 0.45;
+const DEF_HEIGHT: f32 = 1.0;
+
+// ----- auth helpers (self-contained; deterministic inside the WASM module) -----
+
+/// sha256(salt + pin), hex-encoded. Uses the `sha2` crate which is no_std-clean
+/// and deterministic — safe inside a reducer.
+fn hash_pin(salt: &str, pin: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(salt.as_bytes());
+    h.update(pin.as_bytes());
+    hex::encode(h.finalize())
+}
+
+/// Random 16-byte salt from the module's deterministic RNG (NOT std rand).
+fn gen_salt(ctx: &ReducerContext) -> String {
+    let mut bytes = [0u8; 16];
+    for b in bytes.iter_mut() {
+        *b = ctx.random::<u8>();
+    }
+    hex::encode(bytes)
+}
+
+/// username: 3..=16 chars, ASCII alphanumeric or underscore.
+fn valid_username(u: &str) -> bool {
+    let n = u.chars().count();
+    n >= 3 && n <= 16 && u.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// pin: 4..=6 ASCII digits.
+fn valid_pin(p: &str) -> bool {
+    let n = p.chars().count();
+    n >= 4 && n <= 6 && p.chars().all(|c| c.is_ascii_digit())
+}
+
 // Name/color: first free among players IN THE SAME MATCH.
 fn assign_identity(ctx: &ReducerContext, match_id: u64) -> (String, u32) {
     let used: Vec<String> = ctx.db.player().match_id().filter(match_id).map(|p| p.name).collect();
@@ -174,6 +244,8 @@ pub fn on_connect(ctx: &ReducerContext) {
         identity: ctx.sender(), name: "wanderer".to_string(), color: 0xffb066,
         match_id: 0, x: 0.0, z: 26.0, yaw: 0.0,
         state: "active".to_string(), carrying_anchor_id: None, last_seen: ctx.timestamp,
+        build: DEF_BUILD, hood: DEF_HOOD, marking: DEF_MARKING,
+        emissive_intensity: DEF_EMISSIVE, height: DEF_HEIGHT,
     });
 }
 
@@ -202,6 +274,96 @@ pub fn set_name(ctx: &ReducerContext, name: String) {
     if let Some(p) = ctx.db.player().identity().find(ctx.sender()) {
         let name = name.chars().take(16).collect::<String>();
         ctx.db.player().identity().update(Player { name, ..p });
+    }
+}
+
+// ============================================================
+//  ACCOUNT / AUTH REDUCERS (self-contained username + PIN)
+// ============================================================
+
+/// Register a new account, binding `username` -> the caller's current identity.
+/// Validates and early-returns on bad input or a taken username (never panics).
+/// Snapshots the caller's current Player avatar into the account so a later
+/// login can restore it. On success the client's me-row subscription
+/// (account.where identity == me) flips, which is how the client detects auth.
+#[spacetimedb::reducer]
+pub fn register_account(ctx: &ReducerContext, username: String, pin: String) {
+    let username = username.trim().to_string();
+    if !valid_username(&username) || !valid_pin(&pin) {
+        return;
+    }
+    // username is the PK — reject if already taken (no panic).
+    if ctx.db.account().username().find(&username).is_some() {
+        return;
+    }
+    let salt = gen_salt(ctx);
+    let pin_hash = hash_pin(&salt, &pin);
+    // Snapshot the caller's current avatar (or defaults if no player row yet).
+    let p = ctx.db.player().identity().find(ctx.sender());
+    let (name, color, build, hood, marking, emissive_intensity, height) = match &p {
+        Some(p) => (p.name.clone(), p.color, p.build, p.hood, p.marking, p.emissive_intensity, p.height),
+        None => (username.clone(), COLORS[0], DEF_BUILD, DEF_HOOD, DEF_MARKING, DEF_EMISSIVE, DEF_HEIGHT),
+    };
+    ctx.db.account().insert(Account {
+        username, pin_hash, salt, identity: ctx.sender(),
+        name, color, build, hood, marking, emissive_intensity, height,
+        created: ctx.timestamp,
+    });
+}
+
+/// Log into an existing account. On a correct PIN, REBIND the account's
+/// `identity` column to the caller's current connection identity and mirror the
+/// saved avatar/name onto the caller's Player row. Wrong PIN / unknown user is a
+/// silent no-op (client watchdog surfaces the error). Never panics.
+#[spacetimedb::reducer]
+pub fn login_account(ctx: &ReducerContext, username: String, pin: String) {
+    let username = username.trim().to_string();
+    if !valid_username(&username) || !valid_pin(&pin) {
+        return;
+    }
+    let acc = match ctx.db.account().username().find(&username) {
+        Some(a) => a,
+        None => return,
+    };
+    if hash_pin(&acc.salt, &pin) != acc.pin_hash {
+        return; // wrong PIN — silent no-op
+    }
+    // Snapshot the avatar/name to mirror onto the Player row.
+    let (name, color, build, hood, marking, emissive_intensity, height) =
+        (acc.name.clone(), acc.color, acc.build, acc.hood, acc.marking, acc.emissive_intensity, acc.height);
+    // Rebind the account to the caller's current connection identity.
+    ctx.db.account().username().update(Account { identity: ctx.sender(), ..acc });
+    // Mirror saved avatar/name onto the caller's Player row.
+    if let Some(p) = ctx.db.player().identity().find(ctx.sender()) {
+        ctx.db.player().identity().update(Player {
+            name, color, build, hood, marking, emissive_intensity, height, ..p
+        });
+    }
+}
+
+/// Update the caller's avatar. Writes BOTH the Player row and (if the caller is
+/// logged in) the caller's account row so the look persists across sessions.
+#[spacetimedb::reducer]
+pub fn set_avatar(
+    ctx: &ReducerContext,
+    color: u32,
+    build: u8,
+    hood: u8,
+    marking: u8,
+    emissive_intensity: f32,
+    height: f32,
+) {
+    if let Some(p) = ctx.db.player().identity().find(ctx.sender()) {
+        ctx.db.player().identity().update(Player {
+            color, build, hood, marking, emissive_intensity, height, ..p
+        });
+    }
+    // Mirror onto the caller's account row, if any (identity is btree-indexed).
+    let mine: Vec<Account> = ctx.db.account().identity().filter(ctx.sender()).collect();
+    for acc in mine {
+        ctx.db.account().username().update(Account {
+            color, build, hood, marking, emissive_intensity, height, ..acc
+        });
     }
 }
 

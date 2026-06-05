@@ -19,7 +19,9 @@ import {
   type ConnectionHealth,
 } from "./spacetime";
 import { Game } from "./Game";
+import { AuthGate } from "./Auth";
 import "./index.css";
+import "./whispers-ui.css";
 
 // Serve the draco decoder from /draco/ instead of the gstatic CDN (offline-safe).
 setupDraco();
@@ -139,7 +141,9 @@ function ResilientApp() {
   return (
     <>
       <SpacetimeDBProvider key={gen} connectionBuilder={builder}>
-        <Game />
+        <AuthGate>
+          <Game />
+        </AuthGate>
       </SpacetimeDBProvider>
       {phase === "reconnecting" && (
         <ReconnectOverlay

@@ -39,11 +39,14 @@ import ClaimWardenReducer from "./claim_warden_reducer";
 import CreateMatchReducer from "./create_match_reducer";
 import JoinMatchReducer from "./join_match_reducer";
 import LeaveMatchReducer from "./leave_match_reducer";
+import LoginAccountReducer from "./login_account_reducer";
 import MovePlayerReducer from "./move_player_reducer";
 import PickupAnchorReducer from "./pickup_anchor_reducer";
 import PlaceAnchorReducer from "./place_anchor_reducer";
+import RegisterAccountReducer from "./register_account_reducer";
 import RescueReducer from "./rescue_reducer";
 import SendChatReducer from "./send_chat_reducer";
+import SetAvatarReducer from "./set_avatar_reducer";
 import SetNameReducer from "./set_name_reducer";
 import StartMatchReducer from "./start_match_reducer";
 import WardenActReducer from "./warden_act_reducer";
@@ -53,6 +56,7 @@ import WardenMimicReducer from "./warden_mimic_reducer";
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import AccountRow from "./account_table";
 import AnchorRow from "./anchor_table";
 import ChatMessageRow from "./chat_message_table";
 import GameMatchRow from "./game_match_table";
@@ -64,6 +68,20 @@ import WardenActionRow from "./warden_action_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  account: __table({
+    name: 'account',
+    indexes: [
+      { accessor: 'identity', name: 'account_identity_idx_btree', algorithm: 'btree', columns: [
+        'identity',
+      ] },
+      { accessor: 'username', name: 'account_username_idx_btree', algorithm: 'btree', columns: [
+        'username',
+      ] },
+    ],
+    constraints: [
+      { name: 'account_username_key', constraint: 'unique', columns: ['username'] },
+    ],
+  }, AccountRow),
   anchor: __table({
     name: 'anchor',
     indexes: [
@@ -154,11 +172,14 @@ const reducersSchema = __reducers(
   __reducerSchema("create_match", CreateMatchReducer),
   __reducerSchema("join_match", JoinMatchReducer),
   __reducerSchema("leave_match", LeaveMatchReducer),
+  __reducerSchema("login_account", LoginAccountReducer),
   __reducerSchema("move_player", MovePlayerReducer),
   __reducerSchema("pickup_anchor", PickupAnchorReducer),
   __reducerSchema("place_anchor", PlaceAnchorReducer),
+  __reducerSchema("register_account", RegisterAccountReducer),
   __reducerSchema("rescue", RescueReducer),
   __reducerSchema("send_chat", SendChatReducer),
+  __reducerSchema("set_avatar", SetAvatarReducer),
   __reducerSchema("set_name", SetNameReducer),
   __reducerSchema("start_match", StartMatchReducer),
   __reducerSchema("warden_act", WardenActReducer),

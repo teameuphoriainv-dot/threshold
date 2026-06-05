@@ -10,20 +10,11 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default __t.row({
-  identity: __t.identity().primaryKey(),
-  name: __t.string(),
+export default {
   color: __t.u32(),
-  matchId: __t.u64().name("match_id"),
-  x: __t.f32(),
-  z: __t.f32(),
-  yaw: __t.f32(),
-  state: __t.string(),
-  carryingAnchorId: __t.option(__t.u64()).name("carrying_anchor_id"),
-  lastSeen: __t.timestamp().name("last_seen"),
   build: __t.u8(),
   hood: __t.u8(),
   marking: __t.u8(),
-  emissiveIntensity: __t.f32().name("emissive_intensity"),
+  emissiveIntensity: __t.f32(),
   height: __t.f32(),
-});
+};
