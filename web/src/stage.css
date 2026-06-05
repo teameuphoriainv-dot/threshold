@@ -311,6 +311,30 @@
   pointer-events: none;
 }
 
+/* STAGE — same affordance over the home podium (it's draggable too, but full-bleed
+   with no panel beside it, so it needs its own discoverability hint). */
+.stage-podium-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 22%;
+  z-index: 2;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--wh-ink-faint);
+  pointer-events: none;
+  animation: stageHintPulse 4s var(--wh-ease) infinite;
+}
+@keyframes stageHintPulse {
+  0%, 100% { opacity: 0.16; }
+  50% { opacity: 0.46; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stage-podium-hint { animation: none; opacity: 0.3; }
+}
+
 /* RIGHT — the Customizer controls slab. CreatorScreen wraps the Customizer in
    .creator-panel > .creator-panel-scroll so a tall control list scrolls inside
    the slab instead of overflowing the page. */

@@ -1,76 +1,52 @@
 // ============================================================
-//  CUSTOMIZER — the full WHISPERS avatar panel (lobby, pre-game, live).
+//  CUSTOMIZER — the full WHISPERS avatar panel (lives inside CreatorScreen).
 //
-//  Self-contained: Game.tsx renders <Customizer/> in the lobby + waiting room.
-//  It owns its own draft state, shows a live rotating <Character/> preview, and
-//  persists via the setAvatar reducer (+ optional account register/login).
+//  FULLY CONTROLLED: this component owns NO avatar/name draft state. The parent
+//  (CreatorScreen) is the single source of truth — it passes the live `value`
+//  (drives every control's selected state) and `name`, and receives every change
+//  synchronously via `onChange` / `onNameChange`. CreatorScreen renders the live
+//  <AvatarPodium avatar={value}/> as the preview, so there is no 3rd WebGL context
+//  here. Changes always reflect instantly; there is no live-toggle or save button.
 //
-//  Wiring contract (see integrationInstructions for the exact Game.tsx edits):
+//  Wiring contract (CreatorScreen owns draft + name):
 //    <Customizer
-//      initial={avatarFromPlayer(me)}        // current persisted look
-//      onApply={(cfg) => setAvatar(avatarToReducerArgs(cfg))}   // setAvatar reducer
-//      onSetName={(name) => setName({ name })}                  // existing set_name
+//      compact
+//      value={draft}                                    // single source of truth
+//      onChange={(cfg) => { setDraft(cfg); onApply(cfg); }}
+//      name={name}
+//      onNameChange={(n) => { setName(n); onSetName?.(n); }}
 //      onRegister={(u,p) => registerAccount({ username:u, pin:p })}
 //      onLogin={(u,p)    => loginAccount({ username:u, pin:p })}
-//      currentName={me?.name}
 //    />
 //
-//  Persistence model:
-//    - Anonymous players: setAvatar writes straight onto their Player row (lives
-//      as long as the identity token in localStorage survives).
+//  Persistence model (handled by the host, not here):
+//    - Anonymous players: setAvatar writes straight onto their Player row.
 //    - Account players: register_account / login_account snapshot the look into
 //      the `account` row keyed by username+pin, so it follows them across devices.
-//      The reducer copies the saved look back onto the live Player on login.
 // ============================================================
-import { useEffect, useMemo, useState } from "react";
-import { Canvas } from "@react-three/fiber";
-import { EffectComposer, Bloom } from "@react-three/postprocessing";
+import { useMemo, useState } from "react";
 import {
   BUILDS, HOODS, MARKINGS, HEIGHTS, EMISSIVE, PALETTE,
-  DEFAULT_AVATAR, type AvatarConfig,
+  type AvatarConfig,
 } from "./avatar";
-import { Character } from "./Character";
 import "./Customizer.css";
 
 export type CustomizerProps = {
-  /** Current persisted look (from the live Player row). Falls back to default. */
-  initial?: AvatarConfig;
-  /** Current persisted name, for the name field. */
-  currentName?: string;
-  /** Persist the look — wire to the setAvatar reducer in Game.tsx. */
-  onApply: (cfg: AvatarConfig) => void;
-  /** Persist the display name — wire to the existing set_name reducer. */
-  onSetName?: (name: string) => void;
+  /** The parent's draft — drives EVERY avatar control's selected state. */
+  value: AvatarConfig;
+  /** Fires SYNCHRONOUSLY on every avatar control change. */
+  onChange: (cfg: AvatarConfig) => void;
+  /** The parent's name draft — drives the NAME input value. */
+  name: string;
+  /** Fires on every NAME keystroke. */
+  onNameChange: (name: string) => void;
   /** Optional account creation — wire to register_account. */
   onRegister?: (username: string, pin: string) => void;
   /** Optional account login — wire to login_account. */
   onLogin?: (username: string, pin: string) => void;
-  /** Show a compact variant (e.g. squeezed into the waiting room). */
+  /** Show a compact variant (e.g. squeezed into the creator panel). */
   compact?: boolean;
 };
-
-// --- a tiny live 3D preview of the current draft ---------------------------
-function Preview({ avatar }: { avatar: AvatarConfig }) {
-  return (
-    <Canvas
-      camera={{ fov: 38, position: [0, 1.8, 5.2] }}
-      style={{ width: "100%", height: "100%", borderRadius: 10 }}
-      gl={{ alpha: true }}
-    >
-      <color attach="background" args={[0x0c0a0d]} />
-      <fogExp2 attach="fog" args={[0x0c0a0d, 0.12]} />
-      <ambientLight intensity={0.5} color={0x4a4048} />
-      <directionalLight position={[3, 6, 4]} intensity={0.7} color={0x8a93a0} />
-      <pointLight position={[-3, 2, 2]} intensity={0.6} color={0xff7a8a} />
-      <group position-y={-0.3}>
-        <Character avatar={avatar} animate seen />
-      </group>
-      <EffectComposer>
-        <Bloom intensity={0.85} luminanceThreshold={0.45} luminanceSmoothing={0.4} mipmapBlur />
-      </EffectComposer>
-    </Canvas>
-  );
-}
 
 // --- a labelled chip row used for each enumerated option -------------------
 function ChipRow<T extends { name: string; desc?: string }>(
@@ -118,52 +94,13 @@ function Slider(
 }
 
 export function Customizer({
-  initial, currentName, onApply, onSetName, onRegister, onLogin, compact = false,
+  value, onChange, name, onNameChange, onRegister, onLogin, compact = false,
 }: CustomizerProps) {
-  const [draft, setDraft] = useState<AvatarConfig>(initial ?? DEFAULT_AVATAR);
-  const [name, setName] = useState(currentName ?? "");
-  const [dirty, setDirty] = useState(false);
-
-  // account panel state
+  // account panel state (the only local state — auth is self-contained here)
   const [authMode, setAuthMode] = useState<"none" | "register" | "login">("none");
   const [username, setUsername] = useState("");
   const [pin, setPin] = useState("");
   const [authErr, setAuthErr] = useState<string | null>(null);
-
-  // Re-sync the draft/name when the persisted row changes underneath us (e.g. on
-  // login, where login_account rewrites the live Player). Done with the official
-  // "adjust state during render" pattern (https://react.dev/reference/react/useState#storing-information-from-previous-renders)
-  // rather than an effect, so there's no cascading re-render. Skipped while the
-  // user has unsaved edits so we never clobber their in-progress choices.
-  const [prevInitial, setPrevInitial] = useState(initial);
-  if (initial && initial !== prevInitial) {
-    setPrevInitial(initial);
-    if (!dirty) setDraft(initial);
-  }
-  const [prevName, setPrevName] = useState(currentName);
-  if (currentName !== undefined && currentName !== prevName) {
-    setPrevName(currentName);
-    if (!dirty) setName(currentName);
-  }
-
-  const set = (patch: Partial<AvatarConfig>) => {
-    setDraft((d) => ({ ...d, ...patch }));
-    setDirty(true);
-  };
-
-  const apply = () => {
-    onApply(draft);
-    if (onSetName && name.trim() && name.trim() !== currentName) onSetName(name.trim());
-    setDirty(false);
-  };
-
-  // live-apply toggle: when on, every change is pushed immediately (great in-lobby UX)
-  const [live, setLive] = useState(true);
-  useEffect(() => {
-    if (!live || !dirty) return;
-    const t = setTimeout(() => { onApply(draft); setDirty(false); }, 180); // debounce
-    return () => clearTimeout(t);
-  }, [live, dirty, draft, onApply]);
 
   const usernameValid = useMemo(() => /^[\w]{3,16}$/.test(username), [username]);
   const pinValid = useMemo(() => /^\d{4,6}$/.test(pin), [pin]);
@@ -179,23 +116,17 @@ export function Customizer({
 
   return (
     <div className={"cz-root" + (compact ? " cz-compact" : "")}>
-      <div className="cz-preview">
-        <Preview avatar={draft} />
-      </div>
-
       <div className="cz-controls">
         <div className="cz-title">YOUR SHAPE</div>
 
-        {onSetName && (
-          <div className="cz-field">
-            <div className="cz-label">NAME</div>
-            <input
-              className="cz-text" maxLength={16} placeholder="who are you?"
-              value={name}
-              onChange={(e) => { setName(e.target.value); setDirty(true); }}
-            />
-          </div>
-        )}
+        <div className="cz-field">
+          <div className="cz-label">NAME</div>
+          <input
+            className="cz-text" maxLength={16} placeholder="who are you?"
+            value={name}
+            onChange={(e) => onNameChange(e.target.value)}
+          />
+        </div>
 
         {/* COLOR — palette swatches (shares the trust-color space) */}
         <div className="cz-field">
@@ -205,40 +136,29 @@ export function Customizer({
               <button
                 key={c}
                 type="button"
-                className={"cz-swatch" + (draft.color === c ? " sel" : "")}
+                className={"cz-swatch" + (value.color === c ? " sel" : "")}
                 style={{ background: "#" + c.toString(16).padStart(6, "0") }}
-                onClick={() => set({ color: c })}
+                onClick={() => onChange({ ...value, color: c })}
                 aria-label={"color " + c.toString(16)}
               />
             ))}
           </div>
         </div>
 
-        <ChipRow label="BUILD" options={BUILDS} value={draft.build} onChange={(i) => set({ build: i })} />
-        <ChipRow label="HOOD" options={HOODS} value={draft.hood} onChange={(i) => set({ hood: i })} />
-        <ChipRow label="MARKING" options={MARKINGS} value={draft.marking} onChange={(i) => set({ marking: i })} />
+        <ChipRow label="BUILD" options={BUILDS} value={value.build} onChange={(i) => onChange({ ...value, build: i })} />
+        <ChipRow label="HOOD" options={HOODS} value={value.hood} onChange={(i) => onChange({ ...value, hood: i })} />
+        <ChipRow label="MARKING" options={MARKINGS} value={value.marking} onChange={(i) => onChange({ ...value, marking: i })} />
 
         <Slider
           label="HEIGHT" min={HEIGHTS.min} max={HEIGHTS.max} step={0.01}
-          value={draft.height} fmt={(v) => v.toFixed(2) + "×"}
-          onChange={(v) => set({ height: v })}
+          value={value.height} fmt={(v) => v.toFixed(2) + "×"}
+          onChange={(v) => onChange({ ...value, height: v })}
         />
         <Slider
           label="GLOW STRENGTH" min={EMISSIVE.min} max={EMISSIVE.max} step={0.01}
-          value={draft.emissive} fmt={(v) => Math.round(v * 100) + "%"}
-          onChange={(v) => set({ emissive: v })}
+          value={value.emissive} fmt={(v) => Math.round(v * 100) + "%"}
+          onChange={(v) => onChange({ ...value, emissive: v })}
         />
-
-        <label className="cz-live">
-          <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
-          apply changes live
-        </label>
-
-        {!live && (
-          <button type="button" className="btn cz-apply" disabled={!dirty} onClick={apply}>
-            {dirty ? "SAVE LOOK" : "SAVED"}
-          </button>
-        )}
 
         {/* ACCOUNT — optional cross-device persistence */}
         {(onRegister || onLogin) && (

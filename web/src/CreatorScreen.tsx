@@ -7,20 +7,22 @@
 //    - "edit": reopened from the Stage's EDIT AVATAR button. CTA reads "DONE".
 //
 //  LAYOUT (reference-adapted, styled by ./stage.css .creator-*): a big
-//  <AvatarPodium/> hero on the LEFT (slow turntable so the player sees themselves
+//  <AvatarPodium/> hero on the LEFT (drag-to-turn so the player can see themselves
 //  from every side) and the existing <Customizer/> control panel on the RIGHT.
 //  A bottom CTA confirms + leaves.
 //
-//  REUSE — it renders the SAME <Customizer/> the waiting room used (controls are
-//  NOT reimplemented here). The Customizer's own little <Preview> Canvas is hidden
-//  by stage.css (.creator-panel .cz-preview { display:none }); the BIG hero is our
-//  <AvatarPodium/>, driven by a draft we mirror off the Customizer's onApply.
+//  REUSE — it renders the <Customizer/> control panel (controls are NOT
+//  reimplemented here). The Customizer is now FULLY CONTROLLED: it has no internal
+//  draft and no preview Canvas of its own — the BIG hero is our <AvatarPodium/>,
+//  driven by the SAME draft that drives every Customizer control.
 //
-//  STATE OWNERSHIP — the screen holds a local `draft` purely to drive the hero
-//  podium. Persistence still flows through the Customizer's onApply -> setAvatar
-//  (passed in from Game.tsx). We tap that same callback to update our draft, then
-//  forward to the host's real onApply. The CTA calls onConfirm() (which the host
-//  wires to: ensure setAvatar has run + leave the creator).
+//  STATE OWNERSHIP — this screen is the SINGLE SOURCE OF TRUTH. It owns `draft`
+//  (the look) and `name`. The draft drives BOTH the hero podium AND every
+//  Customizer control's selected state; `name` drives the Customizer NAME input.
+//  Customizer.onChange/onNameChange update our state synchronously (instant live
+//  preview) and we forward to the host's onApply/onSetName for persistence. The
+//  CTA calls onConfirm() (which the host wires to: ensure setAvatar has run +
+//  leave the creator).
 //
 //  PURE-ish: no STDB. The host passes the persistence callbacks + an onConfirm.
 //
@@ -55,13 +57,33 @@ export type CreatorScreenProps = {
 export function CreatorScreen({
   mode, initial, currentName, onApply, onSetName, onConfirm, onCancel,
 }: CreatorScreenProps) {
-  // local mirror of the look ONLY to drive the big hero podium. Persistence still
-  // goes through the host's onApply below.
+  // CreatorScreen is the SINGLE SOURCE OF TRUTH for both the look draft and the
+  // name draft. This one `draft` drives BOTH the big hero <AvatarPodium/> preview
+  // AND every <Customizer/> control's selected state (the Customizer is now fully
+  // controlled — no internal draft, no re-sync, no debounce). Persistence flows
+  // through the host's onApply/onSetName.
   const [draft, setDraft] = useState<AvatarConfig>(initial ?? DEFAULT_AVATAR);
+  const [name, setName] = useState(currentName ?? "");
+
+  // Re-seed the name ONLY when the persisted currentName changes BY VALUE and the
+  // field is still untouched (e.g. the stdb register fix lands the username after
+  // first paint). We compare prev/next currentName by VALUE — never by reference —
+  // because reference-clobbering on every parent render was the original bug.
+  // String currentName is a primitive, so === is a value comparison.
+  const [prevName, setPrevName] = useState(currentName);
+  if (currentName !== undefined && currentName !== prevName) {
+    setPrevName(currentName);
+    if (name === (prevName ?? "")) setName(currentName); // only if untouched
+  }
 
   const handleApply = (cfg: AvatarConfig) => {
-    setDraft(cfg);   // update the hero preview
+    setDraft(cfg);   // update the hero preview + drive every control's selected state
     onApply(cfg);    // persist via the host's setAvatar (flips avatar_set first time)
+  };
+
+  const handleNameChange = (n: string) => {
+    setName(n);        // drive the controlled NAME input + (future) preview
+    onSetName?.(n);    // persist via the host's set_name reducer
   };
 
   const firstTime = mode === "create";
@@ -86,8 +108,8 @@ export function CreatorScreen({
       {/* BODY — left hero podium, right Customizer controls */}
       <div className="creator-body">
         <div className="creator-stage">
-          <AvatarPodium avatar={draft} spinning className="creator-podium" />
-          <div className="creator-stage-hint">it turns on its own</div>
+          <AvatarPodium avatar={draft} className="creator-podium" />
+          <div className="creator-stage-hint">drag to turn</div>
         </div>
 
         {/* the existing control panel. NO onRegister/onLogin — auth already
@@ -95,11 +117,11 @@ export function CreatorScreen({
         <div className="creator-panel">
           <div className="creator-panel-scroll">
             <Customizer
-              initial={initial ?? DEFAULT_AVATAR}
-              currentName={currentName}
-              onApply={handleApply}
-              onSetName={onSetName}
               compact
+              value={draft}
+              onChange={handleApply}
+              name={name}
+              onNameChange={handleNameChange}
             />
           </div>
         </div>

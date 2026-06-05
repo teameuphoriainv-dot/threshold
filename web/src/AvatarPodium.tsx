@@ -35,8 +35,8 @@
 //
 //  OWNED BY the lobby-stage builder. Imported by StageScreen + CreatorScreen.
 // ============================================================================
-import { Component, Suspense, useMemo, useRef, type ReactNode, type CSSProperties } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Component, Suspense, useEffect, useMemo, useRef, type ReactNode, type CSSProperties } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { Character, CapsuleFallback, preloadCharacter } from "./Character";
@@ -182,11 +182,133 @@ function Backdrop() {
 }
 
 // ----------------------------------------------------------------------------
+//  DRAG-TURNTABLE — the avatar rotates ONLY when the user drags it (mouse OR
+//  touch). No auto-spin. A flick releases into momentum that decays with friction;
+//  grabbing again kills the spin. Listeners live on the canvas DOM element so a
+//  drag anywhere over the podium turns the figure; touch-action:none stops the
+//  page from stealing the gesture. rotation.y is driven imperatively in useFrame
+//  so dragging never triggers a React re-render.
+// ----------------------------------------------------------------------------
+const DRAG_K = 0.0095;        // radians of spin per pixel dragged
+const FRICTION = 0.94;        // momentum decay per frame after a flick
+const MAX_DX = 80;            // clamp a single teleported/coalesced move event
+const FLICK_STALE_MS = 60;    // release after pausing this long → no flick
+const DEADZONE = 3;           // px of total travel below which a press is a click, not a drag
+const KEY_STEP = 0.18;        // radians per arrow-key press
+const TAU = Math.PI * 2;
+
+// Drag-to-rotate, hardened for real input: tracks ONE active pointer (multi-touch
+// safe), ends on a window-level pointerup/blur/lostpointercapture so the flag can
+// never wedge (alt-tab, right-click, release over a DOM overlay), clamps teleport
+// jumps, drops the flick on hold/cancel/click, wraps rotation so it never grows
+// unbounded, honours reduced-motion, and adds arrow-key rotation for keyboard users.
+function DragTurntable({ children }: { children: ReactNode }) {
+  const group = useRef<THREE.Group>(null);
+  const { gl } = useThree();
+  const s = useRef({ rot: 0, vel: 0, dragging: false, lastX: 0, id: -1, lastMoveT: 0, moved: 0 });
+  const reduce = useMemo(
+    () => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
+    [],
+  );
+
+  useEffect(() => {
+    const el = gl.domElement;
+    const prevTouch = el.style.touchAction;
+    const prevSelect = el.style.userSelect;
+    el.style.touchAction = "none";
+    el.style.userSelect = "none";
+    el.style.setProperty("-webkit-user-select", "none"); // iOS long-press callout guard
+    el.style.cursor = "grab";
+    el.tabIndex = 0;
+    el.setAttribute("role", "slider");
+    el.setAttribute("aria-label", "drag or use arrow keys to rotate the avatar");
+
+    const down = (e: PointerEvent) => {
+      if (s.current.dragging) return;                          // ignore secondary pointers
+      if (e.pointerType === "mouse" && e.button !== 0) return; // primary button only (no right-click)
+      s.current.dragging = true;
+      s.current.id = e.pointerId;
+      s.current.vel = 0;
+      s.current.moved = 0;
+      s.current.lastX = e.clientX;
+      s.current.lastMoveT = performance.now();
+      try { el.setPointerCapture(e.pointerId); } catch { /* some pointers aren't capturable */ }
+      el.style.cursor = "grabbing";
+    };
+    const move = (e: PointerEvent) => {
+      if (!s.current.dragging || e.pointerId !== s.current.id) return;
+      let dx = e.clientX - s.current.lastX;
+      dx = Math.max(-MAX_DX, Math.min(MAX_DX, dx));            // bound a single bad frame
+      s.current.lastX = e.clientX;
+      s.current.moved += Math.abs(dx);
+      const dr = dx * DRAG_K;
+      s.current.rot += dr;
+      s.current.vel = dr;
+      s.current.lastMoveT = performance.now();
+    };
+    // flick=true → keep momentum (a real release); flick=false → stop dead (cancel/blur)
+    const stop = (id: number, flick: boolean) => {
+      if (!s.current.dragging) return;
+      s.current.dragging = false;
+      if (!flick || reduce || s.current.moved < DEADZONE ||
+          performance.now() - s.current.lastMoveT > FLICK_STALE_MS) {
+        s.current.vel = 0;
+      }
+      try { if (id >= 0) el.releasePointerCapture(id); } catch { /* noop */ }
+      s.current.id = -1;
+      el.style.cursor = "grab";
+    };
+    const onUp = (e: PointerEvent) => { if (e.pointerId === s.current.id) stop(e.pointerId, true); };
+    const onCancel = (e: PointerEvent) => { if (e.pointerId === s.current.id) stop(e.pointerId, false); };
+    const onLost = () => stop(s.current.id, false);
+    const onBlur = () => stop(s.current.id, false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") { s.current.rot -= KEY_STEP; s.current.vel = 0; }
+      else if (e.key === "ArrowRight") { s.current.rot += KEY_STEP; s.current.vel = 0; }
+    };
+
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointercancel", onCancel);
+    el.addEventListener("lostpointercapture", onLost);
+    el.addEventListener("keydown", onKey);
+    window.addEventListener("pointerup", onUp);   // release anywhere — over overlays, off-canvas
+    window.addEventListener("blur", onBlur);       // alt-tab / OS switch can't wedge the drag
+    return () => {
+      el.removeEventListener("pointerdown", down);
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointercancel", onCancel);
+      el.removeEventListener("lostpointercapture", onLost);
+      el.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("blur", onBlur);
+      el.style.touchAction = prevTouch;
+      el.style.userSelect = prevSelect;
+      el.style.removeProperty("-webkit-user-select");
+      el.style.cursor = "";
+    };
+  }, [gl, reduce]);
+
+  useFrame(() => {
+    const st = s.current;
+    if (!st.dragging) {
+      st.rot += st.vel;
+      st.vel *= FRICTION;
+      if (Math.abs(st.vel) < 1e-4) st.vel = 0;
+    }
+    st.rot = ((st.rot % TAU) + TAU) % TAU;   // wrap to [0, 2π) — never grows unbounded
+    if (group.current) group.current.rotation.y = st.rot;
+  });
+
+  return <group ref={group}>{children}</group>;
+}
+
+// ----------------------------------------------------------------------------
 //  RIG — the camera/lights/scene contents. Tuned to echo <Atmosphere/> (teal key
 //  from above-front, crimson rim from behind, dim ambient, ACES on renderer) but
 //  WITHOUT the heavy composer, since this is a second Canvas on the lobby.
 // ----------------------------------------------------------------------------
-function PodiumScene({ avatar, spinning }: { avatar: AvatarConfig; spinning: boolean }) {
+function PodiumScene({ avatar }: { avatar: AvatarConfig }) {
   return (
     <>
       {/* dark teal void + matching exponential fog so the silhouettes dissolve */}
@@ -222,14 +344,17 @@ function PodiumScene({ avatar, spinning }: { avatar: AvatarConfig; spinning: boo
       <Platform accent={avatar.color} />
 
       {/* THE AVATAR — centered, grounded on the pad (Character renders feet at y=0).
-          `animate` drives the idle bob + slow turntable inside Character; we pass
-          it from `spinning`. `seen` brightens the identity halo (lobby = always
-          "seen"/self). Suspense + boundary keep first paint safe. */}
+          Wrapped in <DragTurntable> so the player turns it by dragging; NO auto-spin
+          (animate={false} keeps Character static — the figure only moves when grabbed).
+          `seen` brightens the identity halo (lobby = always "seen"/self). Suspense +
+          boundary keep first paint safe. */}
       <PodiumBoundary fallback={<CapsuleFallback color={avatar.color} />}>
         <Suspense fallback={<CapsuleFallback color={avatar.color} />}>
-          <group position-y={0.12}>
-            <Character avatar={avatar} animate={spinning} seen />
-          </group>
+          <DragTurntable>
+            <group position-y={0.12}>
+              <Character avatar={avatar} animate={false} seen />
+            </group>
+          </DragTurntable>
         </Suspense>
       </PodiumBoundary>
 
@@ -247,13 +372,11 @@ function PodiumScene({ avatar, spinning }: { avatar: AvatarConfig; spinning: boo
 // ----------------------------------------------------------------------------
 export type AvatarPodiumProps = {
   avatar: AvatarConfig;
-  /** Slow turntable + idle bob. Default: idle bob only (no rotation). */
-  spinning?: boolean;
   className?: string;
   style?: CSSProperties;
 };
 
-export function AvatarPodium({ avatar, spinning = false, className, style }: AvatarPodiumProps) {
+export function AvatarPodium({ avatar, className, style }: AvatarPodiumProps) {
   return (
     <div className={"podium-root" + (className ? " " + className : "")} style={style}>
       <Canvas
@@ -270,7 +393,7 @@ export function AvatarPodium({ avatar, spinning = false, className, style }: Ava
         camera={{ fov: 34, near: 0.1, far: 120, position: [0, 2.0, 9.2] }}
         onCreated={({ camera }) => camera.lookAt(0, 1.6, 0)}
       >
-        <PodiumScene avatar={avatar} spinning={spinning} />
+        <PodiumScene avatar={avatar} />
       </Canvas>
     </div>
   );

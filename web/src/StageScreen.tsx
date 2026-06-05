@@ -60,6 +60,7 @@ export function StageScreen({
       {/* full-bleed 3D podium — the player's avatar center stage. idle bob, no
           forced turntable (the stage is a calm "you, waiting" beat). */}
       <AvatarPodium avatar={avatar} className="stage-podium" />
+      <div className="stage-podium-hint" aria-hidden>drag to turn</div>
 
       {/* soft inner vignette to seat the DOM panels over the 3D */}
       <div className="stage-vignette" aria-hidden />

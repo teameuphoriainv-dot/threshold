@@ -307,12 +307,19 @@ pub fn register_account(ctx: &ReducerContext, username: String, pin: String) {
     }
     let salt = gen_salt(ctx);
     let pin_hash = hash_pin(&salt, &pin);
+    // DEFAULT display name = the username (overrides the on_connect "wanderer").
     // Snapshot the caller's current avatar (or defaults if no player row yet).
     let p = ctx.db.player().identity().find(ctx.sender());
-    let (name, color, build, hood, marking, emissive_intensity, height) = match &p {
-        Some(p) => (p.name.clone(), p.color, p.build, p.hood, p.marking, p.emissive_intensity, p.height),
-        None => (username.clone(), COLORS[0], DEF_BUILD, DEF_HOOD, DEF_MARKING, DEF_EMISSIVE, DEF_HEIGHT),
+    let name = username.clone();
+    let (color, build, hood, marking, emissive_intensity, height) = match &p {
+        Some(p) => (p.color, p.build, p.hood, p.marking, p.emissive_intensity, p.height),
+        None => (COLORS[0], DEF_BUILD, DEF_HOOD, DEF_MARKING, DEF_EMISSIVE, DEF_HEIGHT),
     };
+    // Write the username onto the caller's live Player row so me?.name shows it
+    // immediately (still editable later via set_name).
+    if let Some(p) = p {
+        ctx.db.player().identity().update(Player { name: name.clone(), ..p });
+    }
     ctx.db.account().insert(Account {
         username, pin_hash, salt, identity: ctx.sender(),
         name, color, build, hood, marking, emissive_intensity, height,
