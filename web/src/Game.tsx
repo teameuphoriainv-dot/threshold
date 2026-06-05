@@ -2,7 +2,8 @@ import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNo
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Atmosphere } from "./Atmosphere";
 import CharacterPlayer, { CapsuleFallback, preloadCharacter } from "./Character";
-import { Customizer } from "./Customizer";
+import { StageScreen } from "./StageScreen";
+import { CreatorScreen } from "./CreatorScreen";
 import { Lore } from "./LoreScreens";
 import { avatarFromPlayer, avatarToReducerArgs, DEFAULT_AVATAR, type AvatarConfig } from "./avatar";
 import * as THREE from "three";
@@ -328,29 +329,6 @@ function Screen({ children }: { children: ReactNode }) {
   return <div className="screen"><div className="box">{children}</div></div>;
 }
 
-function Lobby({ playerCount, onCreate, onJoin }: { playerCount: number; onCreate: () => void; onJoin: (code: string) => void }) {
-  const [code, setCode] = useState("");
-  return (
-    <Screen>
-      <h1>WHISPERS</h1>
-      <div className="tag">
-        A non-Euclidean horror you escape together — if you can still trust each other.
-        An entity learns how you type and wears your friends' voices. A message glows
-        <span style={{ color: "#ffd9a8" }}> warm</span> only when you can <i>see</i> the sender.
-      </div>
-      <div className="tag" style={{ color: "#7ad1ff" }}>● connected to SpacetimeDB — {playerCount} online</div>
-      <div className="btn" onClick={onCreate}>CREATE A WORLD</div>
-      <div style={{ marginTop: 18, display: "flex", gap: 8, justifyContent: "center" }}>
-        <input id="joinCode" maxLength={4} placeholder="CODE" autoComplete="off"
-          value={code} onChange={(e) => setCode(e.target.value.toUpperCase())}
-          onKeyDown={(e) => { if (e.key === "Enter" && code.trim()) onJoin(code.trim()); }}
-          style={{ width: 110, textAlign: "center", letterSpacing: 6, textTransform: "uppercase" }} />
-        <div className="btn" style={{ marginTop: 0 }} onClick={() => code.trim() && onJoin(code.trim())}>JOIN</div>
-      </div>
-    </Screen>
-  );
-}
-
 function WaitingRoom({ code, players, myId, onStart, onLeave, customizer }: { code: string; players: readonly Player[]; myId: string; onStart: () => void; onLeave: () => void; customizer?: ReactNode }) {
   return (
     <Screen>
@@ -378,9 +356,14 @@ export function Game() {
   useKeyboard();
   const conn = useSpacetimeDB();
   const myId = idHex(conn.identity);
+  // has this identity finished avatar creation? (separate avatar_done table)
+  const [avatarDoneRows] = useTable(conn.identity ? tables.avatar_done.where((r) => r.identity.eq(conn.identity!)) : tables.avatar_done.where(() => false));
+  const avatarSet = avatarDoneRows.length > 0;
   const selfRef = useRef<Self>({ x: 0, z: 26, yaw: 0, scale: 1 });
   const sfx = useUiSounds();
   const [introSeen, setIntroSeen] = useState(false);
+  const [editingAvatar, setEditingAvatar] = useState(false);
+  const [draftCfg, setDraftCfg] = useState<AvatarConfig | null>(null);
 
   const [players] = useTable(tables.player);
   const [matches] = useTable(tables.game_match);
@@ -419,9 +402,19 @@ export function Game() {
 
   if (!introSeen) return <Lore variant="intro" onContinue={() => { sfx.unlock(); setIntroSeen(true); }} onSkip={() => { sfx.unlock(); setIntroSeen(true); }} seed={chat.length} />;
   if (!conn.isActive) return <Screen><h1>WHISPERS</h1><div className="tag">opening a door to the dark…</div></Screen>;
-  if (!inMatch) return <Lobby playerCount={players.length} onCreate={() => { sfx.unlock(); void createMatch(); }} onJoin={(c) => { sfx.unlock(); void joinMatch({ code: c }); }} />;
-  if (state === "lobby") return <WaitingRoom code={myMatch?.code ?? "…"} players={matchPlayers} myId={myId} onStart={() => void startMatch()} onLeave={() => void leaveMatch()}
-    customizer={<Customizer compact initial={meAvatar} currentName={me?.name} onApply={(cfg) => void setAvatar(avatarToReducerArgs(cfg))} onSetName={(n) => void setName({ name: n })} />} />;
+  // First-time avatar creation (no avatar yet) OR reopened edit from the Stage.
+  // Create mode keeps a local draft and only commits on CROSS OVER, so a live tweak
+  // never trips avatar_set early and bounces the player to the stage mid-customize.
+  if (!inMatch && (!avatarSet || editingAvatar)) return (
+    <CreatorScreen mode={avatarSet ? "edit" : "create"} initial={meAvatar} currentName={me?.name}
+      onApply={(cfg) => { setDraftCfg(cfg); if (avatarSet) void setAvatar(avatarToReducerArgs(cfg)); }}
+      onSetName={(n) => void setName({ name: n })}
+      onConfirm={() => { sfx.unlock(); void setAvatar(avatarToReducerArgs(draftCfg ?? meAvatar)); setDraftCfg(null); setEditingAvatar(false); }}
+      onCancel={avatarSet ? () => { setDraftCfg(null); setEditingAvatar(false); } : undefined} />
+  );
+  // Home STAGE — avatar center, room controls at the bottom.
+  if (!inMatch) return <StageScreen avatar={meAvatar} playerName={me?.name} onlineCount={players.length} onCreate={() => { sfx.unlock(); void createMatch(); }} onJoin={(c) => { sfx.unlock(); void joinMatch({ code: c }); }} onEditAvatar={() => setEditingAvatar(true)} />;
+  if (state === "lobby") return <WaitingRoom code={myMatch?.code ?? "…"} players={matchPlayers} myId={myId} onStart={() => void startMatch()} onLeave={() => void leaveMatch()} />;
   if (state === "won" || state === "lost") return <Lore variant="end" outcome={state === "won" ? "won" : "lost"} onContinue={() => void leaveMatch()} seed={chat.length} />;
 
   return (

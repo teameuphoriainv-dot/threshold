@@ -9,7 +9,6 @@ import { SpacetimeDBProvider } from "spacetimedb/react";
 import {
   connectionBuilder,
   setupDraco,
-  STDB,
   clearStoredToken,
   makeHealthHooks,
   reportRetryScheduled,
@@ -147,7 +146,6 @@ function ResilientApp() {
       </SpacetimeDBProvider>
       {phase === "reconnecting" && (
         <ReconnectOverlay
-          target={`${STDB.uri} / ${STDB.db}`}
           onRetry={reconnectNow}
           onResetIdentity={resetIdentity}
         />
@@ -181,8 +179,8 @@ function statusCopy(h: ConnectionHealth): { title: string; sub: string; tone: st
 }
 
 function ReconnectOverlay({
-  target, onRetry, onResetIdentity,
-}: { target: string; onRetry: () => void; onResetIdentity: () => void }) {
+  onRetry, onResetIdentity,
+}: { onRetry: () => void; onResetIdentity: () => void }) {
   const health = useConnectionHealth();
   const countdown = useRetryCountdown(health.nextRetryAt);
   const { title, sub, tone } = statusCopy(health);
@@ -201,27 +199,19 @@ function ReconnectOverlay({
         </div>
         <div style={{ marginTop: 10, color: "#c8b6ba", fontSize: 13 }}>{sub}</div>
 
-        <div style={{ marginTop: 6, color: "#6f5c61", fontSize: 11 }}>{target}</div>
-
-        {/* Live status line: attempt count + countdown to the next try. */}
-        {(health.attempts > 0 || retrying) && (
-          <div style={{ marginTop: 8, color: "#8a767b", fontSize: 11 }}>
-            {health.attempts > 0 && <span>attempt {health.attempts}</span>}
-            {health.attempts > 0 && retrying && <span> · </span>}
-            {retrying && <span>next try in {countdown}s</span>}
-            {health.status === "offline" && <span>backoff paused</span>}
-          </div>
+        {/* In-world recovery line only — no URLs, DB names, or raw errors leak here. */}
+        {retrying && (
+          <div style={{ marginTop: 8, color: "#8a767b", fontSize: 11 }}>the dark gathers again in {countdown}s…</div>
         )}
-
-        {health.lastError && (
-          <div style={{ marginTop: 8, color: "#7a2730", fontSize: 11, maxWidth: 320 }}>{health.lastError}</div>
+        {health.status === "offline" && (
+          <div style={{ marginTop: 8, color: "#8a767b", fontSize: 11 }}>waiting for the world to return…</div>
         )}
 
         <div style={{ marginTop: 12, display: "flex", gap: 8, justifyContent: "center" }}>
-          <div onClick={onRetry} style={retryBtn}>retry now</div>
+          <div onClick={onRetry} style={retryBtn}>try again</div>
           {showReset && (
-            <div onClick={onResetIdentity} style={resetBtn} title="Forget the saved identity and connect fresh">
-              reset identity
+            <div onClick={onResetIdentity} style={resetBtn} title="Start fresh">
+              start over
             </div>
           )}
         </div>

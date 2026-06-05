@@ -81,6 +81,15 @@ pub struct Account {
     pub created: Timestamp,
 }
 
+/// Which identities have finished avatar creation. A SEPARATE table (not an
+/// account column) so the schema change is a clean additive migration — adding a
+/// brand-new table never requires backfilling/defaulting existing rows.
+#[spacetimedb::table(accessor = avatar_done, public)]
+pub struct AvatarDone {
+    #[primary_key]
+    pub identity: Identity,
+}
+
 /// Anchors — real or fake (the Warden's lure). Scoped to a match.
 #[spacetimedb::table(accessor = anchor, public)]
 pub struct Anchor {
@@ -362,8 +371,13 @@ pub fn set_avatar(
     let mine: Vec<Account> = ctx.db.account().identity().filter(ctx.sender()).collect();
     for acc in mine {
         ctx.db.account().username().update(Account {
-            color, build, hood, marking, emissive_intensity, height, ..acc
+            color, build, hood, marking, emissive_intensity, height,
+            ..acc
         });
+    }
+    // Mark avatar creation complete (idempotent — PK on identity).
+    if ctx.db.avatar_done().identity().find(ctx.sender()).is_none() {
+        ctx.db.avatar_done().insert(AvatarDone { identity: ctx.sender() });
     }
 }
 

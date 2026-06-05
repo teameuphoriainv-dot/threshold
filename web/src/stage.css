@@ -1,0 +1,417 @@
+/* ============================================================================
+   WHISPERS — stage.css
+   Styling for the lobby-stage builder's three owned surfaces:
+     - <AvatarPodium/>   .podium-root        (the full-bleed 3D Canvas wrapper)
+     - <StageScreen/>    .stage-*            (the HOME — podium + room bar + side)
+     - <CreatorScreen/>  .creator-*          (first-time / edit avatar fullscreen)
+
+   Imported by StageScreen.tsx + CreatorScreen.tsx. Layers ON TOP of
+   whispers-ui.css (it reuses the --wh-* tokens + the .wh-btn / .wh-input /
+   .wh-panel / .wh-title primitives), so this file only adds the NEW stage/creator
+   layout classes. whispers-ui.css must already be imported once from main.tsx
+   (it is).
+
+   DESIGN: a Fortnite-style lobby LAYOUT (hero avatar dead-center, identity panel
+   to the side, a fat primary CTA + join field pinned to the bottom) rendered in
+   WHISPERS-dark: crimson/teal glow, manor fog, opaque blurred slabs so every word
+   survives the volumetric fog + bloom behind it.
+
+   CLASS INDEX  (every selector this file styles)
+   ──────────────────────────────────────────────────────────────────────────
+   PODIUM        .podium-root  (+ .podium-root canvas)
+   STAGE shell   .stage-root .stage-podium .stage-vignette
+   STAGE title   .stage-title .stage-tagline
+   STAGE side    .stage-side .stage-side-label .stage-name .stage-divider
+                 .stage-online .stage-online-dot .stage-online-count
+                 .stage-online-label
+   STAGE bottom  .stage-roombar .stage-create .stage-roombar-sep .stage-join
+                 .stage-join-input .stage-join-btn
+   CREATOR shell .creator-root .creator-vignette
+   CREATOR head  .creator-head .creator-eyebrow .creator-headline .creator-sub
+   CREATOR body  .creator-body .creator-stage .creator-podium .creator-stage-hint
+                 .creator-panel .creator-panel-scroll
+                 (+ .creator-panel .cz-preview override)
+   CREATOR foot  .creator-foot .creator-actions .creator-cta .creator-cancel
+                 .creator-hint
+   RESPONSIVE / REDUCED-MOTION blocks
+   ========================================================================== */
+
+/* ----------------------------------------------------------------------------
+   PODIUM — the AvatarPodium Canvas wrapper. Full-bleed inside whatever host box
+   places it; the host (.stage-podium / .creator-podium) owns absolute/grid sizing.
+---------------------------------------------------------------------------- */
+.podium-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.podium-root canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ============================================================================
+   STAGE — the HOME screen
+   ============================================================================ */
+.stage-root {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  font-family: var(--wh-font);
+  color: var(--wh-ink);
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(28, 10, 16, 0.35), rgba(5, 3, 5, 0.96) 78%),
+    var(--wh-bg-deep);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* the podium fills the whole stage, sitting BEHIND the DOM overlay */
+.stage-podium {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* soft inner vignette + top/bottom scrims that seat the DOM panels over the 3D */
+.stage-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  box-shadow: inset 0 0 240px 70px rgba(5, 0, 2, 0.8);
+  background:
+    linear-gradient(to bottom, rgba(4, 2, 4, 0.55) 0%, transparent 22%, transparent 58%, rgba(4, 2, 4, 0.82) 100%);
+}
+
+/* TITLE — top center -------------------------------------------------------- */
+.stage-title {
+  position: absolute;
+  top: clamp(20px, 4vh, 44px);
+  left: 0;
+  right: 0;
+  z-index: 2;
+  text-align: center;
+  pointer-events: none;
+}
+.stage-title .wh-title { margin: 0; }
+.stage-tagline {
+  margin-top: var(--wh-s2);
+  font-size: 12px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--wh-ink-faint);
+}
+
+/* SIDE PANEL — identity (name / edit / online), pinned to the right ---------- */
+/* StageScreen adds .wh-panel for the slab look; we add positioning + width. */
+.stage-side {
+  position: absolute;
+  top: 50%;
+  right: clamp(18px, 4vw, 56px);
+  transform: translateY(-50%);
+  z-index: 3;
+  width: 248px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wh-s3);
+  text-align: left;
+  animation: whFadeUp 0.6s var(--wh-ease) both;
+}
+.stage-side-label {
+  font-size: 10px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--wh-ink-faint);
+}
+.stage-name {
+  font-size: 24px;
+  letter-spacing: 0.06em;
+  color: var(--wh-ember);
+  text-shadow: 0 0 16px rgba(255, 217, 168, 0.35);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stage-divider {
+  height: 1px;
+  margin: var(--wh-s1) 0;
+  background: linear-gradient(to right, var(--wh-hairline), transparent);
+}
+.stage-online {
+  display: flex;
+  align-items: baseline;
+  gap: var(--wh-s2);
+  font-size: 12px;
+  color: var(--wh-ink-dim);
+}
+.stage-online-dot {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7ad1ff;
+  box-shadow: 0 0 10px #7ad1ff;
+  animation: whBreathe 3s ease-in-out infinite;
+}
+.stage-online-count {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  color: #7ad1ff;
+  letter-spacing: 0.04em;
+}
+.stage-online-label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--wh-ink-faint);
+}
+
+/* BOTTOM ROOM BAR — CREATE (big CTA) + JOIN by code -------------------------- */
+.stage-roombar {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(28px, 6vh, 64px);
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--wh-s4);
+  padding: var(--wh-s4) var(--wh-s5);
+  background: var(--wh-slab);
+  border: 1px solid var(--wh-hairline);
+  border-radius: var(--wh-radius);
+  box-shadow:
+    0 0 44px rgba(150, 12, 28, 0.24),
+    inset 0 0 0 1px var(--wh-hairline-soft);
+  backdrop-filter: blur(6px);
+  animation: whFadeUp 0.6s var(--wh-ease) both;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+/* the fat primary call to action */
+.stage-create {
+  font-size: 15px;
+  letter-spacing: 0.2em;
+  padding: 15px 34px;
+}
+.stage-roombar-sep {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--wh-ink-faint);
+}
+.stage-join {
+  display: flex;
+  gap: var(--wh-s2);
+  align-items: stretch;
+}
+.stage-join-input {
+  width: 132px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.stage-join-btn { padding: 12px 22px; }
+
+/* ============================================================================
+   CREATOR — first-time / edit avatar fullscreen
+   ============================================================================ */
+.creator-root {
+  position: fixed;
+  inset: 0;
+  z-index: 32; /* above the stage (20); over live gameplay if ever edited there */
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+  font-family: var(--wh-font);
+  color: var(--wh-ink);
+  background:
+    radial-gradient(ellipse at 50% 36%, rgba(34, 12, 20, 0.45), rgba(4, 2, 4, 0.98) 76%),
+    var(--wh-bg-deep);
+  -webkit-font-smoothing: antialiased;
+  animation: whFadeIn 0.4s var(--wh-ease) both;
+}
+.creator-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  box-shadow: inset 0 0 220px 60px rgba(6, 0, 2, 0.86);
+}
+
+/* HEADER — eyebrow + headline + sub, top center ----------------------------- */
+.creator-head {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  padding: clamp(18px, 4vh, 40px) var(--wh-s5) var(--wh-s4);
+}
+.creator-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.36em;
+  text-transform: uppercase;
+  color: var(--wh-crimson-dim);
+  margin-bottom: var(--wh-s2);
+}
+.creator-headline {
+  margin: 0;
+  font-family: var(--wh-font-display);
+  font-size: clamp(26px, 4.4vw, 40px);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--wh-crimson);
+  text-shadow: 0 0 30px rgba(255, 30, 52, 0.5), 0 0 4px rgba(255, 90, 110, 0.55);
+}
+.creator-sub {
+  margin: var(--wh-s3) auto 0;
+  max-width: 52ch;
+  font-size: 13px;
+  line-height: 1.65;
+  letter-spacing: 0.06em;
+  color: var(--wh-ink-dim);
+}
+
+/* BODY — split: big podium hero (left) + Customizer controls (right) --------- */
+.creator-body {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: clamp(16px, 3vw, 40px);
+  min-height: 0; /* let the row shrink so the panel scrolls, not the page */
+  padding: 0 clamp(18px, 5vw, 72px);
+  align-items: stretch;
+}
+
+/* LEFT — the live full-body podium hero */
+.creator-stage {
+  position: relative;
+  min-height: 0;
+  border: 1px solid var(--wh-hairline);
+  border-radius: var(--wh-radius);
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 72%, rgba(60, 18, 26, 0.45), rgba(5, 3, 5, 0.96) 72%),
+    var(--wh-bg-deep);
+  box-shadow: inset 0 0 80px rgba(90, 0, 14, 0.3);
+}
+.creator-podium { position: absolute; inset: 0; }
+.creator-stage-hint {
+  position: absolute;
+  bottom: var(--wh-s3);
+  left: 0;
+  right: 0;
+  z-index: 2;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--wh-ink-faint);
+  pointer-events: none;
+}
+
+/* RIGHT — the Customizer controls slab. CreatorScreen wraps the Customizer in
+   .creator-panel > .creator-panel-scroll so a tall control list scrolls inside
+   the slab instead of overflowing the page. */
+.creator-panel {
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--wh-s4);
+  background: var(--wh-slab);
+  border: 1px solid var(--wh-hairline);
+  border-radius: var(--wh-radius);
+  box-shadow: inset 0 0 0 1px var(--wh-hairline-soft);
+}
+.creator-panel-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--wh-s2);
+}
+.creator-panel-scroll::-webkit-scrollbar { width: 6px; }
+.creator-panel-scroll::-webkit-scrollbar-thumb {
+  background: var(--wh-crimson-dim);
+  border-radius: 3px;
+}
+
+/* The embedded Customizer (passed `compact`) renders its OWN little 3D preview
+   (cz-preview). On the creator we already show a BIG podium on the left, so hide
+   the Customizer's duplicate preview and let its controls own the slab width. */
+.creator-panel .cz-root { grid-template-columns: 1fr; max-height: none; width: 100%; }
+.creator-panel .cz-preview { display: none; }
+
+/* FOOTER — the primary CTA (CROSS OVER first-time / DONE edit) + cancel ------ */
+.creator-foot {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--wh-s2);
+  padding: var(--wh-s4) var(--wh-s5) clamp(20px, 4vh, 40px);
+}
+.creator-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--wh-s4);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.creator-cta {
+  font-size: 16px;
+  letter-spacing: 0.24em;
+  padding: 16px 48px;
+}
+.creator-cancel { font-size: 12px; }
+.creator-hint {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--wh-ink-faint);
+}
+
+/* ----------------------------------------------------------------------------
+   RESPONSIVE — stack the creator split + relax the stage side panel on narrow.
+---------------------------------------------------------------------------- */
+@media (max-width: 880px) {
+  .creator-body {
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(0, auto);
+    overflow-y: auto;
+  }
+  .creator-stage { min-height: 320px; }
+  .stage-side {
+    top: auto;
+    bottom: calc(clamp(28px, 6vh, 64px) + 150px);
+    right: 50%;
+    transform: translateX(50%);
+    width: min(320px, 86vw);
+    align-items: center;
+    text-align: center;
+  }
+  .stage-divider { width: 80%; align-self: center; }
+}
+
+@media (max-width: 520px) {
+  .stage-roombar {
+    left: var(--wh-s4);
+    right: var(--wh-s4);
+    transform: none;
+    width: auto;
+  }
+  .stage-create { width: 100%; }
+  .stage-join { width: 100%; }
+  .stage-join-input { flex: 1; width: auto; }
+}
+
+/* ----------------------------------------------------------------------------
+   REDUCED MOTION — kill the entrance/breathe animations (index.css + whispers-ui
+   do the global kill; re-assert for the stage-specific keyframed elements).
+---------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .stage-side,
+  .stage-roombar,
+  .creator-root { animation: none !important; }
+  .stage-online-dot { animation: none !important; }
+}

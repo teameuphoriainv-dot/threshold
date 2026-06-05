@@ -37,6 +37,11 @@ export const Anchor = __t.object("Anchor", {
 });
 export type Anchor = __Infer<typeof Anchor>;
 
+export const AvatarDone = __t.object("AvatarDone", {
+  identity: __t.identity(),
+});
+export type AvatarDone = __Infer<typeof AvatarDone>;
+
 export const ChatMessage = __t.object("ChatMessage", {
   id: __t.u64(),
   matchId: __t.u64(),
