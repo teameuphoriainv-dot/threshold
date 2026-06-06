@@ -29,8 +29,8 @@
 //  calm baseline. No props required.
 // ============================================================================
 
-import { useMemo, useRef } from "react";
-import { useThree, useFrame } from "@react-three/fiber";
+import { useMemo } from "react";
+import { useThree } from "@react-three/fiber";
 import { Environment, Lightformer, SoftShadows } from "@react-three/drei";
 import {
   EffectComposer,
@@ -42,7 +42,6 @@ import {
 } from "@react-three/postprocessing";
 import { BlendFunction } from "postprocessing";
 import * as THREE from "three";
-import { fx, ambientColor } from "./fx";
 
 // ---------------------------------------------------------------------------
 //  1+ . Renderer-level cinematic setup: ACES Filmic + color management + a
@@ -118,72 +117,37 @@ function DarkIBL() {
 }
 
 // ---------------------------------------------------------------------------
-//  5 . Dread-reactive post stack. One useFrame drives the live params from the
-//  shared fx scalar; the JSX wires a fixed, ordered chain. Refs typed loosely
-//  (the effect classes expose mutable public fields the wrappers forward to).
+//  5 . Post stack — a fixed, ordered grading chain (bloom -> desaturate -> lens
+//  fringe -> vignette -> AA), baked to a steady mid-dread look.
+//
+//  DO NOT pass a `ref` to these wrapped effects. Under React 19, `ref` is a
+//  normal prop, and @react-three/postprocessing v3.0.4 memoises each effect with
+//  JSON.stringify(props) — a ref serialises ref.current (the effect, which holds
+//  the scene/camera) and throws "Converting circular structure to JSON", which
+//  unmounts the whole Canvas (black screen the instant you enter a match). The
+//  stack is therefore static; re-add dread reactivity via composer traversal or a
+//  React-19-safe postprocessing build, never via per-effect refs.
 // ---------------------------------------------------------------------------
-type AnyEffect = {
-  intensity?: number;
-  offset?: THREE.Vector2;
-  saturation?: number;
-  hue?: number;
-} & Record<string, unknown>;
-
 function Grade() {
-  const bloom = useRef<AnyEffect>(null);
-  const aberr = useRef<AnyEffect>(null);
-  const vignette = useRef<{ uniforms?: Map<string, { value: number }> } & AnyEffect>(null);
-  const hue = useRef<AnyEffect>(null);
-  const baseAberr = useMemo(() => new THREE.Vector2(0.0006, 0.0006), []);
-
-  useFrame(() => {
-    // ambient: 0 (calm) .. 1 (peak dread). Reads the shared breathing scalar;
-    // 0 if fx isn't being ticked — degrades to a steady cinematic baseline.
-    const a = THREE.MathUtils.clamp(fx.ambient, 0, 1);
-    const [cr] = ambientColor(); // arterial drift (red channel) as the match decays
-
-    if (bloom.current) {
-      // bloom blooms harder under dread; crimson lights smear into the fog
-      bloom.current.intensity = 0.85 + a * 0.9;
-    }
-    if (aberr.current?.offset) {
-      // lens fringing creeps up with dread — subtle, never nauseating
-      const k = 1 + a * 2.2 + cr * 1.5;
-      aberr.current.offset.set(baseAberr.x * k, baseAberr.y * k);
-    }
-    if (vignette.current?.uniforms) {
-      // tighten + darken the vignette as dread rises (closing-in feeling)
-      const d = vignette.current.uniforms.get("darkness");
-      const o = vignette.current.uniforms.get("offset");
-      if (d) d.value = 0.9 + a * 0.45;
-      if (o) o.value = 0.28 - a * 0.08;
-    }
-    if (hue.current) {
-      // drain colour as dread peaks; the world goes sick and grey-teal
-      hue.current.saturation = -0.18 - a * 0.22;
-      // nudge hue a hair toward cold so even neutral surfaces feel wrong
-      hue.current.hue = -0.04 * a;
-    }
-  });
-
+  // a constant, subtle chromatic-aberration offset. A plain Vector2 PROP is safe
+  // to pass (it serialises fine); only a `ref` triggers the circular-JSON crash.
+  const baseAberr = useMemo(() => new THREE.Vector2(0.0009, 0.0009), []);
   return (
     <EffectComposer multisampling={0} enableNormalPass={false}>
       <Bloom
-        ref={bloom as never}
-        intensity={0.9}
+        intensity={1.15}
         luminanceThreshold={0.5}
         luminanceSmoothing={0.45}
         mipmapBlur
       />
-      <HueSaturation ref={hue as never} saturation={-0.2} hue={0} />
+      <HueSaturation saturation={-0.3} hue={-0.02} />
       <ChromaticAberration
-        ref={aberr as never}
         offset={baseAberr}
         radialModulation={false}
         modulationOffset={0}
         blendFunction={BlendFunction.NORMAL}
       />
-      <Vignette ref={vignette as never} eskil={false} offset={0.28} darkness={0.95} />
+      <Vignette eskil={false} offset={0.26} darkness={1.05} />
       {/* edge AA last; ACES already ran on the renderer so no ToneMapping pass */}
       <SMAA />
     </EffectComposer>
