@@ -185,6 +185,143 @@ pub struct WorldEvent {
 }
 
 // ============================================================
+//  FULL-META LOBBY TABLES (P0 — ADDITIVE, NEW TABLES ONLY)
+//
+//  Every table below is brand-new => a clean additive migration (no
+//  --delete-data, hot-swap republish). NONE of game_match / player / account /
+//  anchor columns are touched. Durable social/economy state keys on
+//  `username: String` (the account PK, the durable identity anchor) so it
+//  survives login_account's identity rebind; ephemeral seat/presence state keys
+//  on Identity.
+// ============================================================
+
+/// The persistent congregation room. Survives between matches; queues as a unit.
+/// `code` is the PARTY invite code (distinct from a match join code).
+/// `bound_match_id` links the party to the match it created so members transition
+/// together (0 = not queued).
+#[spacetimedb::table(accessor = party, public)]
+pub struct Party {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub code: String,           // party invite code (looked up via scan, like game_match.code)
+    pub leader: Identity,
+    pub bound_match_id: u64,    // 0 = not queued
+    pub state: String,          // "gathering" | "queued"
+    pub created_at: Timestamp,
+}
+
+/// Membership + per-member ready ember. Separate from `party` so a readiness
+/// toggle never rewrites the party row. Indexed by party_id (roster fetch) and
+/// member (find-my-party).
+#[spacetimedb::table(accessor = party_member, public)]
+pub struct PartyMember {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub party_id: u64,
+    #[index(btree)]
+    pub member: Identity,
+    pub username: String,
+    pub ready: bool,
+    pub joined_at: Timestamp,
+}
+
+/// Valorant agent-select analog: who locks "carry the first anchor" per slot
+/// (0..2, the 3 anchor slots). The match reads it to seed spawn-carrying.
+/// One row per (match_id, slot).
+#[spacetimedb::table(accessor = anchor_assignment, public)]
+pub struct AnchorAssignment {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub match_id: u64,
+    pub slot: u8,               // 0..2
+    pub carrier: Identity,
+    pub locked: bool,
+    pub created_at: Timestamp,
+}
+
+/// Post-match declassified reveal. Written by the Warden client ONLY at match
+/// end (sanitized — felt/truth lines per username, NO live targeting). The
+/// CLIENT subscription is filtered `match_id == mine AND match.state in
+/// {won,lost}`; this reducer hard-gates the WRITE on the same terminal state, so
+/// no mid-match read path can ever exist (anti-pillar 5). NEVER reads
+/// warden_action / warden_seat.
+#[spacetimedb::table(accessor = absorption_report, public)]
+pub struct AbsorptionReport {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub match_id: u64,
+    pub username: String,
+    pub felt: String,           // "WHAT YOU FELT" line
+    pub truth: String,          // "WHAT THE WARDEN DID" line
+    pub created_at: Timestamp,
+}
+
+/// Relic Cache ownership, keyed to username so it persists across logins. Equip
+/// itself reuses the existing set_avatar reducer (no new player column). The
+/// catalog of item_keys is a client constant.
+#[spacetimedb::table(accessor = unlock, public)]
+pub struct Unlock {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub username: String,
+    pub item_key: String,       // e.g. "mark.eye", "hue.spectral"
+    pub source: String,         // "play" | "market" | "track"
+    pub created_at: Timestamp,
+}
+
+/// Single ambient boolean — the Warden rarely manifests faintly in the Foyer
+/// backdrop. ONE global row (id = 0). NO per-player identity, NO match link,
+/// NO seat reference. Dread, not information (anti-pillar 5) — identical for
+/// every subscriber, so it cannot leak who/whether anyone is the Warden.
+#[spacetimedb::table(accessor = warden_present, public)]
+pub struct WardenPresent {
+    #[primary_key]
+    pub id: u8,                 // always 0 — the singleton row
+    pub present: bool,
+    pub updated_at: Timestamp,
+}
+
+/// Earn-by-play soft currency (Residue). account is frozen, so wallet is a new
+/// table keyed by username. Single source for earn/spend. NO real money.
+#[spacetimedb::table(accessor = wallet, public)]
+pub struct Wallet {
+    #[primary_key]
+    pub username: String,
+    pub residue: u32,
+    pub updated_at: Timestamp,
+}
+
+/// Descent Record — XP/levels + battle-pass-lite track tier. Keyed to username.
+#[spacetimedb::table(accessor = progression, public)]
+pub struct Progression {
+    #[primary_key]
+    pub username: String,
+    pub level: u32,
+    pub xp: u32,
+    pub track_tier: u8,
+    pub updated_at: Timestamp,
+}
+
+/// One felt/truth pair (per username) for `write_absorption_report`. The Warden
+/// client pre-sanitizes these server-bound; the reducer strips any live identity
+/// by only persisting username/felt/truth.
+#[derive(spacetimedb::SpacetimeType)]
+pub struct ReportRow {
+    pub username: String,
+    pub felt: String,
+    pub truth: String,
+}
+
+// ============================================================
 //  HELPERS
 // ============================================================
 
@@ -270,6 +407,34 @@ fn gen_code(ctx: &ReducerContext) -> String {
         }
     }
     format!("{}", ctx.timestamp.to_micros_since_unix_epoch() % 100000)
+}
+
+/// Resolve the caller's durable username from the live connection identity.
+/// account.identity is btree-indexed; returns None for anon (no account) callers.
+fn me_username(ctx: &ReducerContext) -> Option<String> {
+    ctx.db.account().identity().filter(ctx.sender()).next().map(|a| a.username)
+}
+
+/// Generate a fresh party invite code (gen_code-style) not currently in use by
+/// any party. Distinct namespace from match codes.
+fn gen_party_code(ctx: &ReducerContext) -> String {
+    for _ in 0..12 {
+        let mut n: u32 = ctx.random();
+        let mut s = String::new();
+        for _ in 0..4 {
+            s.push(CODE_ALPHA[(n as usize) % CODE_ALPHA.len()] as char);
+            n /= CODE_ALPHA.len() as u32;
+        }
+        if !ctx.db.party().iter().any(|p| p.code == s) {
+            return s;
+        }
+    }
+    format!("P{}", ctx.timestamp.to_micros_since_unix_epoch() % 10000)
+}
+
+/// Find the party_member row for the caller's connection identity (at most one).
+fn my_party_member(ctx: &ReducerContext) -> Option<PartyMember> {
+    ctx.db.party_member().member().filter(ctx.sender()).next()
 }
 
 fn seed_anchors(ctx: &ReducerContext, match_id: u64) {
@@ -798,4 +963,375 @@ pub fn absorb(ctx: &ReducerContext, match_id: u64, victim: Identity) {
     ctx.db.player().identity().update(Player { state: "absorbed".to_string(), ..v });
     ctx.db.tether().insert(Tether { id: 0, match_id, absorbed: victim, x: vx, z: vz });
     touch_seat(ctx, match_id);
+}
+
+// ============================================================
+//  FULL-META LOBBY REDUCERS (P0)
+//
+//  Every reducer authorizes on ctx.sender(), validates input, and early-returns
+//  on bad/duplicate state — NEVER panics (mirrors the account/match patterns).
+//  Client call names are camelCase (createParty, joinPartyByCode, ...).
+// ============================================================
+
+// ----- PARTY (The Congregation) -----
+
+const PARTY_CAP: usize = 6;
+
+/// Caller becomes leader of a fresh party with a generated invite code; inserts
+/// the party + a party_member row for the caller (ready=false). No-op if the
+/// caller is already in a party. Any logged-in player.
+#[spacetimedb::reducer]
+pub fn create_party(ctx: &ReducerContext) {
+    // already in a party -> no-op
+    if my_party_member(ctx).is_some() {
+        return;
+    }
+    let username = match me_username(ctx) {
+        Some(u) => u,
+        None => return, // anon (no account) cannot open a party
+    };
+    let code = gen_party_code(ctx);
+    let p = ctx.db.party().insert(Party {
+        id: 0, code, leader: ctx.sender(), bound_match_id: 0,
+        state: "gathering".to_string(), created_at: ctx.timestamp,
+    });
+    ctx.db.party_member().insert(PartyMember {
+        id: 0, party_id: p.id, member: ctx.sender(), username,
+        ready: false, joined_at: ctx.timestamp,
+    });
+}
+
+/// Join a party by its invite code. Validates: party exists, state=="gathering",
+/// caller not already a member, capacity <= PARTY_CAP. Result error surfaces to
+/// the client watchdog.
+#[spacetimedb::reducer]
+pub fn join_party_by_code(ctx: &ReducerContext, code: String) -> Result<(), String> {
+    let username = me_username(ctx).ok_or("no account")?;
+    if my_party_member(ctx).is_some() {
+        return Err("already in a party".to_string());
+    }
+    let code = code.trim().to_uppercase();
+    let party = ctx.db.party().iter().find(|p| p.code == code).ok_or("no such party")?;
+    if party.state != "gathering" {
+        return Err("party is not open".to_string());
+    }
+    let count = ctx.db.party_member().party_id().filter(party.id).count();
+    if count >= PARTY_CAP {
+        return Err("party is full".to_string());
+    }
+    ctx.db.party_member().insert(PartyMember {
+        id: 0, party_id: party.id, member: ctx.sender(), username,
+        ready: false, joined_at: ctx.timestamp,
+    });
+    Ok(())
+}
+
+/// Delete the caller's party_member. If the caller was leader, promote the oldest
+/// remaining member; if the party is now empty, delete it. Caller-auth.
+#[spacetimedb::reducer]
+pub fn leave_party(ctx: &ReducerContext) {
+    let pm = match my_party_member(ctx) { Some(pm) => pm, None => return };
+    let party_id = pm.party_id;
+    let was_leader = ctx.db.party().id().find(party_id)
+        .map(|p| p.leader == ctx.sender()).unwrap_or(false);
+    ctx.db.party_member().id().delete(pm.id);
+
+    let mut remaining: Vec<PartyMember> =
+        ctx.db.party_member().party_id().filter(party_id).collect();
+    if remaining.is_empty() {
+        ctx.db.party().id().delete(party_id);
+        return;
+    }
+    if was_leader {
+        // promote the oldest remaining member (smallest id == earliest joined)
+        remaining.sort_by_key(|m| m.id);
+        let heir = remaining[0].member;
+        if let Some(p) = ctx.db.party().id().find(party_id) {
+            ctx.db.party().id().update(Party { leader: heir, ..p });
+        }
+    }
+}
+
+/// Toggle the caller's ready ember. No-op if not in a party. Caller-auth.
+#[spacetimedb::reducer]
+pub fn set_party_ready(ctx: &ReducerContext, ready: bool) {
+    if let Some(pm) = my_party_member(ctx) {
+        ctx.db.party_member().id().update(PartyMember { ready, ..pm });
+    }
+}
+
+/// Leader-only: remove a member's party_member row. Validates the target is in
+/// the caller's party and is not the leader. Silent no-op otherwise.
+#[spacetimedb::reducer]
+pub fn kick_party_member(ctx: &ReducerContext, member: Identity) {
+    let pm = match my_party_member(ctx) { Some(pm) => pm, None => return };
+    let party = match ctx.db.party().id().find(pm.party_id) { Some(p) => p, None => return };
+    if party.leader != ctx.sender() { return; }      // leader-only
+    if member == ctx.sender() { return; }            // can't kick self via kick
+    // target must be in THIS party
+    let target = ctx.db.party_member().party_id().filter(party.id)
+        .find(|m| m.member == member);
+    if let Some(t) = target {
+        if t.member == party.leader { return; }      // never kick the leader
+        ctx.db.party_member().id().delete(t.id);
+    }
+}
+
+/// Leader-only party -> match transition. ATOMIC (one reducer / one transaction):
+///   1. all members must be ready (solo party trivially passes),
+///   2. create a fresh match + seed its anchors (reuse create_match logic),
+///   3. move EVERY party_member's Player.match_id into the new match,
+///   4. bind party.bound_match_id + state="queued".
+/// If anything precondition fails, returns Err and NOTHING is written.
+#[spacetimedb::reducer]
+pub fn party_queue(ctx: &ReducerContext) -> Result<(), String> {
+    let pm = my_party_member(ctx).ok_or("not in a party")?;
+    let party = ctx.db.party().id().find(pm.party_id).ok_or("no party")?;
+    if party.leader != ctx.sender() {
+        return Err("leader only".to_string());
+    }
+    if party.state != "gathering" {
+        return Err("party already queued".to_string());
+    }
+    let members: Vec<PartyMember> = ctx.db.party_member().party_id().filter(party.id).collect();
+    if members.is_empty() {
+        return Err("empty party".to_string());
+    }
+    // all members ready (a solo party of the leader still must toggle? leader is a
+    // member row too — require every row ready).
+    if !members.iter().all(|m| m.ready) {
+        return Err("not everyone is ready".to_string());
+    }
+    // create the match (mirrors create_match) — anchors seeded.
+    let code = gen_code(ctx);
+    let m = ctx.db.game_match().insert(GameMatch {
+        id: 0, code, state: "lobby".to_string(), time_left: 600.0, phase: 1,
+        anchors_placed: 0, exit_open: false, warden_identity: None,
+        warden_last_action: ctx.timestamp, created_at: ctx.timestamp,
+    });
+    seed_anchors(ctx, m.id);
+    // move every member's Player row into the match (assign a per-match name/color).
+    for mem in &members {
+        if let Some(p) = ctx.db.player().identity().find(mem.member) {
+            let (name, color) = assign_identity(ctx, m.id);
+            ctx.db.player().identity().update(Player {
+                match_id: m.id, name, color, x: 0.0, z: 26.0, state: "active".to_string(),
+                carrying_anchor_id: None, ..p
+            });
+        }
+    }
+    // bind the party to its match.
+    ctx.db.party().id().update(Party {
+        bound_match_id: m.id, state: "queued".to_string(), ..party
+    });
+    Ok(())
+}
+
+// ----- ANCHOR-ASSIGNMENT (Descent Ceremony) -----
+
+/// Caller locks anchor slot (0..2) as carrier during Anchor-Assignment. Auth:
+/// caller is a Player in match_id AND match.state == "lobby". Validates: slot in
+/// range, slot not already locked. Upserts one row per (match_id, slot).
+#[spacetimedb::reducer]
+pub fn lock_anchor_slot(ctx: &ReducerContext, match_id: u64, slot: u8) {
+    if slot > 2 { return; }
+    let p = match ctx.db.player().identity().find(ctx.sender()) { Some(p) => p, None => return };
+    if p.match_id != match_id { return; }            // must be in the match
+    let m = match ctx.db.game_match().id().find(match_id) { Some(m) => m, None => return };
+    if m.state != "lobby" { return; }                // assignment only pre-match
+    // find any existing row for this (match, slot)
+    let existing = ctx.db.anchor_assignment().match_id().filter(match_id)
+        .find(|a| a.slot == slot);
+    match existing {
+        Some(a) => {
+            if a.locked { return; }                  // already locked — no steal
+            ctx.db.anchor_assignment().id().update(AnchorAssignment {
+                carrier: ctx.sender(), locked: true, ..a
+            });
+        }
+        None => {
+            ctx.db.anchor_assignment().insert(AnchorAssignment {
+                id: 0, match_id, slot, carrier: ctx.sender(), locked: true,
+                created_at: ctx.timestamp,
+            });
+        }
+    }
+}
+
+// ----- ABSORPTION REPORT (post-match reveal — indistinguishability gate) -----
+
+/// WARDEN-ONLY (is_warden_of) post-match declassify. HARD-GATED on
+/// game_match.state in {won,lost} so a report can NEVER be written mid-match
+/// (that would leak the Warden's live actions — anti-pillar 5). Inserts one
+/// sanitized row per ReportRow (username/felt/truth only — any live identity is
+/// stripped by construction). Idempotent-ish: re-running appends, so callers
+/// should write once at finalize. Silent no-op on auth/state failure.
+#[spacetimedb::reducer]
+pub fn write_absorption_report(ctx: &ReducerContext, match_id: u64, rows: Vec<ReportRow>) {
+    let m = match ctx.db.game_match().id().find(match_id) { Some(m) => m, None => return };
+    if !is_warden_of(ctx, &m) { return; }            // warden-only
+    // HARD GATE: reports exist ONLY for ended matches.
+    if m.state != "won" && m.state != "lost" { return; }
+    for r in rows {
+        ctx.db.absorption_report().insert(AbsorptionReport {
+            id: 0, match_id, username: r.username, felt: r.felt, truth: r.truth,
+            created_at: ctx.timestamp,
+        });
+    }
+}
+
+// ----- UNLOCKS (Relic Cache) -----
+
+/// Grant a cosmetic unlock to the caller's username if not already owned (unique
+/// guard via find-before-insert — never panics). Caller must be logged in.
+#[spacetimedb::reducer]
+pub fn grant_unlock(ctx: &ReducerContext, item_key: String, source: String) {
+    let username = match me_username(ctx) { Some(u) => u, None => return };
+    let item_key = item_key.trim().to_string();
+    if item_key.is_empty() { return; }
+    // dedupe: at most one (username, item_key) row.
+    let owned = ctx.db.unlock().username().filter(&username)
+        .any(|u| u.item_key == item_key);
+    if owned { return; }
+    ctx.db.unlock().insert(Unlock {
+        id: 0, username, item_key, source, created_at: ctx.timestamp,
+    });
+}
+
+// ----- WARDEN PRESENCE (Lisa-in-the-lobby — single ambient boolean) -----
+
+/// Secret-gated (same WARDEN_SECRET pattern as claim_warden) toggle of the single
+/// global warden_present row. Wrong/absent secret is a SILENT no-op (reveals
+/// nothing). Carries NO identity — pure ambient dread.
+#[spacetimedb::reducer]
+pub fn set_warden_present(ctx: &ReducerContext, present: bool, secret: String) {
+    if secret != WARDEN_SECRET { return; }           // silent: no observable timing
+    match ctx.db.warden_present().id().find(0) {
+        Some(row) => {
+            ctx.db.warden_present().id().update(WardenPresent {
+                present, updated_at: ctx.timestamp, ..row
+            });
+        }
+        None => {
+            ctx.db.warden_present().insert(WardenPresent {
+                id: 0, present, updated_at: ctx.timestamp,
+            });
+        }
+    }
+}
+
+// ----- WALLET (Residue — earn-by-play soft currency) -----
+
+/// Add Residue to the caller's wallet (upsert). Server-internal in spirit
+/// (granted on play/escape) but caller-scoped: only ever credits the caller's own
+/// wallet. Saturating add — never overflows, never panics.
+#[spacetimedb::reducer]
+pub fn earn_residue(ctx: &ReducerContext, amount: u32) {
+    let username = match me_username(ctx) { Some(u) => u, None => return };
+    match ctx.db.wallet().username().find(&username) {
+        Some(w) => {
+            ctx.db.wallet().username().update(Wallet {
+                residue: w.residue.saturating_add(amount), updated_at: ctx.timestamp, ..w
+            });
+        }
+        None => {
+            ctx.db.wallet().insert(Wallet {
+                username, residue: amount, updated_at: ctx.timestamp,
+            });
+        }
+    }
+}
+
+/// Spend Residue from the caller's wallet on an item, then grant the unlock.
+/// Validates balance is sufficient (price is a fixed P0 placeholder per item via
+/// item_price). On success debits + inserts an unlock(source="market"). Returns
+/// Err on insufficient funds / unknown item so the client can surface it.
+#[spacetimedb::reducer]
+pub fn spend_residue(ctx: &ReducerContext, item_key: String) -> Result<(), String> {
+    let username = me_username(ctx).ok_or("no account")?;
+    let item_key = item_key.trim().to_string();
+    if item_key.is_empty() {
+        return Err("invalid item".to_string());
+    }
+    let price = item_price(&item_key);
+    let w = ctx.db.wallet().username().find(&username).ok_or("no wallet")?;
+    if w.residue < price {
+        return Err("not enough residue".to_string());
+    }
+    // already owned -> no double charge.
+    let owned = ctx.db.unlock().username().filter(&username)
+        .any(|u| u.item_key == item_key);
+    if owned {
+        return Err("already owned".to_string());
+    }
+    ctx.db.wallet().username().update(Wallet {
+        residue: w.residue - price, updated_at: ctx.timestamp, ..w
+    });
+    ctx.db.unlock().insert(Unlock {
+        id: 0, username, item_key, source: "market".to_string(), created_at: ctx.timestamp,
+    });
+    Ok(())
+}
+
+/// Fixed P0 price table for Void Market items (no store_offer table in P0). A
+/// later P1 store_offer row supersedes this. Unknown keys default to a safe high
+/// price so nothing is accidentally free.
+fn item_price(item_key: &str) -> u32 {
+    match item_key {
+        k if k.starts_with("mark.") => 100,
+        k if k.starts_with("hue.") => 60,
+        k if k.starts_with("shape.") => 150,
+        _ => 200,
+    }
+}
+
+// ----- PRESENCE / PROGRESSION HEARTBEAT -----
+
+/// Lightweight presence + progression heartbeat called at match end. `outcome`
+/// is "escaped" | "absorbed" | "" — on a clean escape the caller earns a small
+/// Residue + XP bump and a level/track recompute. Caller-scoped (only mutates the
+/// caller's own wallet/progression). No-op for anon callers. Never panics.
+#[spacetimedb::reducer]
+pub fn heartbeat_presence(ctx: &ReducerContext, outcome: String) {
+    let username = match me_username(ctx) { Some(u) => u, None => return };
+    // XP/residue award only on a successful escape (earn-by-play).
+    let (xp_gain, residue_gain) = match outcome.as_str() {
+        "escaped" => (50u32, 40u32),
+        "absorbed" => (15u32, 10u32),
+        _ => (5u32, 0u32),
+    };
+    // wallet upsert
+    if residue_gain > 0 {
+        match ctx.db.wallet().username().find(&username) {
+            Some(w) => {
+                ctx.db.wallet().username().update(Wallet {
+                    residue: w.residue.saturating_add(residue_gain),
+                    updated_at: ctx.timestamp, ..w
+                });
+            }
+            None => {
+                ctx.db.wallet().insert(Wallet {
+                    username: username.clone(), residue: residue_gain, updated_at: ctx.timestamp,
+                });
+            }
+        }
+    }
+    // progression upsert (level = 1 + xp/500; track_tier = xp/1000 capped 255)
+    match ctx.db.progression().username().find(&username) {
+        Some(pr) => {
+            let xp = pr.xp.saturating_add(xp_gain);
+            let level = 1 + xp / 500;
+            let track_tier = (xp / 1000).min(255) as u8;
+            ctx.db.progression().username().update(Progression {
+                xp, level, track_tier, updated_at: ctx.timestamp, ..pr
+            });
+        }
+        None => {
+            let xp = xp_gain;
+            ctx.db.progression().insert(Progression {
+                username, level: 1 + xp / 500, xp,
+                track_tier: (xp / 1000).min(255) as u8, updated_at: ctx.timestamp,
+            });
+        }
+    }
 }

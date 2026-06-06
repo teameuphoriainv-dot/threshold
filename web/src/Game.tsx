@@ -13,7 +13,7 @@ import { collide, canSee, PLAYER_R } from "./world";
 import { Kit } from "./Kit";
 import { type Self, idHex } from "./helpers";
 import { Anchors, Tethers, InteractionLayer, PromptOverlay, Minimap, useUiSounds, GameAudio, AudioToggle } from "./Gameplay";
-import { useWorldEvents, WardenEntity, GhostSilhouettes, FXOverlays } from "./WardenFX";
+import { useWorldEvents, WardenEntity, GhostSilhouettes, WardenWorldFX, FXOverlays } from "./WardenFX";
 import { Vines } from "./Vines";
 import { Portals } from "./Portals";
 import { Ground } from "./Ground";
@@ -236,6 +236,7 @@ function Scene({ self, players, myId, onMove, anchors, tethers, pickup, place, r
       <Portals self={self} />
       <WardenEntity self={self} />
       <GhostSilhouettes />
+      <WardenWorldFX />
       <InteractionLayer anchors={anchors} tethers={tethers} players={players} myId={myId} self={self}
         pickup={pickup} place={place} rescue={rescue} />
     </>

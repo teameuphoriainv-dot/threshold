@@ -37,10 +37,19 @@ import {
 import AbsorbReducer from "./absorb_reducer";
 import ClaimWardenReducer from "./claim_warden_reducer";
 import CreateMatchReducer from "./create_match_reducer";
+import CreatePartyReducer from "./create_party_reducer";
+import EarnResidueReducer from "./earn_residue_reducer";
+import GrantUnlockReducer from "./grant_unlock_reducer";
+import HeartbeatPresenceReducer from "./heartbeat_presence_reducer";
 import JoinMatchReducer from "./join_match_reducer";
+import JoinPartyByCodeReducer from "./join_party_by_code_reducer";
+import KickPartyMemberReducer from "./kick_party_member_reducer";
 import LeaveMatchReducer from "./leave_match_reducer";
+import LeavePartyReducer from "./leave_party_reducer";
+import LockAnchorSlotReducer from "./lock_anchor_slot_reducer";
 import LoginAccountReducer from "./login_account_reducer";
 import MovePlayerReducer from "./move_player_reducer";
+import PartyQueueReducer from "./party_queue_reducer";
 import PickupAnchorReducer from "./pickup_anchor_reducer";
 import PlaceAnchorReducer from "./place_anchor_reducer";
 import RegisterAccountReducer from "./register_account_reducer";
@@ -48,6 +57,9 @@ import RescueReducer from "./rescue_reducer";
 import SendChatReducer from "./send_chat_reducer";
 import SetAvatarReducer from "./set_avatar_reducer";
 import SetNameReducer from "./set_name_reducer";
+import SetPartyReadyReducer from "./set_party_ready_reducer";
+import SetWardenPresentReducer from "./set_warden_present_reducer";
+import SpendResidueReducer from "./spend_residue_reducer";
 import StartMatchReducer from "./start_match_reducer";
 import WardenActReducer from "./warden_act_reducer";
 import WardenCorruptAnchorReducer from "./warden_corrupt_anchor_reducer";
@@ -55,23 +67,46 @@ import WardenEventReducer from "./warden_event_reducer";
 import WardenHeartbeatReducer from "./warden_heartbeat_reducer";
 import WardenMimicReducer from "./warden_mimic_reducer";
 import WardenSpawnLureReducer from "./warden_spawn_lure_reducer";
+import WriteAbsorptionReportReducer from "./write_absorption_report_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import AbsorptionReportRow from "./absorption_report_table";
 import AccountRow from "./account_table";
 import AnchorRow from "./anchor_table";
+import AnchorAssignmentRow from "./anchor_assignment_table";
 import AvatarDoneRow from "./avatar_done_table";
 import ChatMessageRow from "./chat_message_table";
 import GameMatchRow from "./game_match_table";
+import PartyRow from "./party_table";
+import PartyMemberRow from "./party_member_table";
 import PlayerRow from "./player_table";
+import ProgressionRow from "./progression_table";
 import TetherRow from "./tether_table";
+import UnlockRow from "./unlock_table";
+import WalletRow from "./wallet_table";
+import WardenPresentRow from "./warden_present_table";
 import WorldEventRow from "./world_event_table";
 
 /** Type-only namespace exports for generated type groups. */
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  absorption_report: __table({
+    name: 'absorption_report',
+    indexes: [
+      { accessor: 'id', name: 'absorption_report_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'match_id', name: 'absorption_report_match_id_idx_btree', algorithm: 'btree', columns: [
+        'matchId',
+      ] },
+    ],
+    constraints: [
+      { name: 'absorption_report_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AbsorptionReportRow),
   account: __table({
     name: 'account',
     indexes: [
@@ -100,6 +135,20 @@ const tablesSchema = __schema({
       { name: 'anchor_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, AnchorRow),
+  anchor_assignment: __table({
+    name: 'anchor_assignment',
+    indexes: [
+      { accessor: 'id', name: 'anchor_assignment_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'match_id', name: 'anchor_assignment_match_id_idx_btree', algorithm: 'btree', columns: [
+        'matchId',
+      ] },
+    ],
+    constraints: [
+      { name: 'anchor_assignment_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AnchorAssignmentRow),
   avatar_done: __table({
     name: 'avatar_done',
     indexes: [
@@ -136,6 +185,34 @@ const tablesSchema = __schema({
       { name: 'game_match_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, GameMatchRow),
+  party: __table({
+    name: 'party',
+    indexes: [
+      { accessor: 'id', name: 'party_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'party_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PartyRow),
+  party_member: __table({
+    name: 'party_member',
+    indexes: [
+      { accessor: 'id', name: 'party_member_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'member', name: 'party_member_member_idx_btree', algorithm: 'btree', columns: [
+        'member',
+      ] },
+      { accessor: 'party_id', name: 'party_member_party_id_idx_btree', algorithm: 'btree', columns: [
+        'partyId',
+      ] },
+    ],
+    constraints: [
+      { name: 'party_member_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PartyMemberRow),
   player: __table({
     name: 'player',
     indexes: [
@@ -150,6 +227,17 @@ const tablesSchema = __schema({
       { name: 'player_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, PlayerRow),
+  progression: __table({
+    name: 'progression',
+    indexes: [
+      { accessor: 'username', name: 'progression_username_idx_btree', algorithm: 'btree', columns: [
+        'username',
+      ] },
+    ],
+    constraints: [
+      { name: 'progression_username_key', constraint: 'unique', columns: ['username'] },
+    ],
+  }, ProgressionRow),
   tether: __table({
     name: 'tether',
     indexes: [
@@ -164,6 +252,42 @@ const tablesSchema = __schema({
       { name: 'tether_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, TetherRow),
+  unlock: __table({
+    name: 'unlock',
+    indexes: [
+      { accessor: 'id', name: 'unlock_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'username', name: 'unlock_username_idx_btree', algorithm: 'btree', columns: [
+        'username',
+      ] },
+    ],
+    constraints: [
+      { name: 'unlock_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, UnlockRow),
+  wallet: __table({
+    name: 'wallet',
+    indexes: [
+      { accessor: 'username', name: 'wallet_username_idx_btree', algorithm: 'btree', columns: [
+        'username',
+      ] },
+    ],
+    constraints: [
+      { name: 'wallet_username_key', constraint: 'unique', columns: ['username'] },
+    ],
+  }, WalletRow),
+  warden_present: __table({
+    name: 'warden_present',
+    indexes: [
+      { accessor: 'id', name: 'warden_present_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'warden_present_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, WardenPresentRow),
   world_event: __table({
     name: 'world_event',
     indexes: [
@@ -185,10 +309,19 @@ const reducersSchema = __reducers(
   __reducerSchema("absorb", AbsorbReducer),
   __reducerSchema("claim_warden", ClaimWardenReducer),
   __reducerSchema("create_match", CreateMatchReducer),
+  __reducerSchema("create_party", CreatePartyReducer),
+  __reducerSchema("earn_residue", EarnResidueReducer),
+  __reducerSchema("grant_unlock", GrantUnlockReducer),
+  __reducerSchema("heartbeat_presence", HeartbeatPresenceReducer),
   __reducerSchema("join_match", JoinMatchReducer),
+  __reducerSchema("join_party_by_code", JoinPartyByCodeReducer),
+  __reducerSchema("kick_party_member", KickPartyMemberReducer),
   __reducerSchema("leave_match", LeaveMatchReducer),
+  __reducerSchema("leave_party", LeavePartyReducer),
+  __reducerSchema("lock_anchor_slot", LockAnchorSlotReducer),
   __reducerSchema("login_account", LoginAccountReducer),
   __reducerSchema("move_player", MovePlayerReducer),
+  __reducerSchema("party_queue", PartyQueueReducer),
   __reducerSchema("pickup_anchor", PickupAnchorReducer),
   __reducerSchema("place_anchor", PlaceAnchorReducer),
   __reducerSchema("register_account", RegisterAccountReducer),
@@ -196,6 +329,9 @@ const reducersSchema = __reducers(
   __reducerSchema("send_chat", SendChatReducer),
   __reducerSchema("set_avatar", SetAvatarReducer),
   __reducerSchema("set_name", SetNameReducer),
+  __reducerSchema("set_party_ready", SetPartyReadyReducer),
+  __reducerSchema("set_warden_present", SetWardenPresentReducer),
+  __reducerSchema("spend_residue", SpendResidueReducer),
   __reducerSchema("start_match", StartMatchReducer),
   __reducerSchema("warden_act", WardenActReducer),
   __reducerSchema("warden_corrupt_anchor", WardenCorruptAnchorReducer),
@@ -203,6 +339,7 @@ const reducersSchema = __reducers(
   __reducerSchema("warden_heartbeat", WardenHeartbeatReducer),
   __reducerSchema("warden_mimic", WardenMimicReducer),
   __reducerSchema("warden_spawn_lure", WardenSpawnLureReducer),
+  __reducerSchema("write_absorption_report", WriteAbsorptionReportReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

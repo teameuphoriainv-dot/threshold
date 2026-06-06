@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WARDEN CONSOLE — Director's Cut</title>
+<style>
+  /* ===================================================================
+     WHISPERS horror HUD — crimson / desaturated / dark. Projector-legible:
+     big type, high contrast, no thin greys on black. No external fonts/CDNs.
+     =================================================================== */
+  :root{
+    --bg:#08060a;
+    --bg2:#0d0a10;
+    --panel:#120d14;
+    --panel2:#160f18;
+    --ink:#e9e2e6;
+    --ink-dim:#9b8f97;
+    --ink-faint:#6c5f68;
+    --crimson:#c81d33;
+    --crimson-bright:#ff2e4d;
+    --crimson-glow:rgba(200,29,51,.45);
+    --amber:#e0a23a;
+    --green:#54c97a;
+    --rule:rgba(200,29,51,.22);
+    --mono:"SFMono-Regular",ui-monospace,"Menlo","Consolas","Liberation Mono",monospace;
+    --sans:"Helvetica Neue",Arial,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:
+      radial-gradient(120% 80% at 50% -10%, rgba(200,29,51,.10), transparent 60%),
+      linear-gradient(180deg,var(--bg2),var(--bg));
+    color:var(--ink); font-family:var(--sans);
+    font-size:18px; line-height:1.35;
+    overflow:hidden;
+  }
+  /* faint scanline / grain so it reads as part of the product, not a debug dump */
+  body::after{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:99;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0,rgba(0,0,0,.16) 1px,transparent 2px,transparent 4px);
+    opacity:.35; mix-blend-mode:multiply;
+  }
+  /* ---- top bar ---- */
+  header{
+    display:flex; align-items:center; gap:18px;
+    padding:14px 26px; border-bottom:1px solid var(--rule);
+    background:linear-gradient(180deg,rgba(200,29,51,.08),transparent);
+  }
+  .brand{font-family:var(--mono); letter-spacing:.42em; font-weight:700;
+    font-size:22px; color:var(--crimson-bright); text-shadow:0 0 18px var(--crimson-glow);}
+  .brand small{display:block;letter-spacing:.3em;font-size:11px;color:var(--ink-faint);font-weight:400;margin-top:3px}
+  .hb{margin-left:auto;display:flex;gap:26px;align-items:center;font-family:var(--mono);font-size:13px;color:var(--ink-dim)}
+  .hb b{color:var(--ink);font-size:16px}
+  .dot{width:11px;height:11px;border-radius:50%;background:var(--ink-faint);box-shadow:0 0 0 0 transparent;display:inline-block;vertical-align:middle;margin-right:7px}
+  .dot.live{background:var(--crimson-bright);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 var(--crimson-glow)}70%{box-shadow:0 0 0 12px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  .tickbox{font-family:var(--mono)}
+  .tickbox .t{color:var(--crimson-bright);font-size:22px;font-weight:700}
+
+  /* ---- layout ---- */
+  main{display:grid; grid-template-columns:minmax(440px,1.05fr) 1.25fr; gap:0; height:calc(100vh - 64px)}
+  .col{overflow:auto; padding:18px 22px}
+  .col.left{border-right:1px solid var(--rule)}
+  .coltitle{font-family:var(--mono);letter-spacing:.34em;font-size:12px;color:var(--ink-faint);
+    text-transform:uppercase;margin:2px 0 14px;display:flex;align-items:center;gap:10px}
+  .coltitle::before{content:"";width:22px;height:1px;background:var(--crimson)}
+
+  /* ---- current-decision card (top of right col) ---- */
+  .now{
+    border:1px solid var(--rule); border-left:3px solid var(--crimson);
+    background:linear-gradient(180deg,var(--panel2),var(--panel));
+    padding:16px 18px; margin-bottom:18px; border-radius:4px;
+    box-shadow:0 0 40px rgba(0,0,0,.5), inset 0 0 60px rgba(200,29,51,.04);
+  }
+  .phaserow{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  .phase{font-family:var(--mono);letter-spacing:.3em;font-weight:700;font-size:20px}
+  .phase .n{color:var(--ink-faint);font-size:13px;margin-left:8px;letter-spacing:.2em}
+  .phase[data-p="1"]{color:#9aa6b0}
+  .phase[data-p="2"]{color:var(--amber)}
+  .phase[data-p="3"]{color:var(--crimson-bright);text-shadow:0 0 16px var(--crimson-glow)}
+  .latency{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--ink-dim)}
+  .latency b{color:var(--green);font-size:17px}
+  .latency.real::after{content:" ● live api";color:var(--crimson-bright);letter-spacing:.1em;font-size:11px}
+  .directive{color:var(--ink-dim);font-style:italic;font-size:14px;margin:10px 0 4px;line-height:1.5;
+    border-left:2px solid var(--rule);padding-left:12px}
+
+  /* energy bar */
+  .energy{margin:14px 0 6px}
+  .energy .lab{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;color:var(--ink-faint);letter-spacing:.18em;margin-bottom:5px}
+  .energy .lab b{color:var(--ink)}
+  .bar{height:16px;border:1px solid var(--rule);border-radius:3px;background:#0a0709;overflow:hidden;position:relative}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#6e1020,var(--crimson),var(--crimson-bright));
+    box-shadow:0 0 14px var(--crimson-glow);transition:width .4s ease}
+  .bar .ticks{position:absolute;inset:0;background-image:repeating-linear-gradient(90deg,transparent 0,transparent 19px,rgba(0,0,0,.5) 19px,rgba(0,0,0,.5) 20px)}
+
+  /* legal-set vs chosen — THE key juxtaposition */
+  .juxta{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:center;margin-top:16px}
+  .legalbox .h,.chosenbox .h{font-family:var(--mono);letter-spacing:.24em;font-size:11px;color:var(--ink-faint);margin-bottom:8px;text-transform:uppercase}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{font-family:var(--mono);font-size:13px;padding:5px 11px;border:1px solid var(--rule);border-radius:14px;
+    color:var(--ink-dim);background:rgba(255,255,255,.015);white-space:nowrap}
+  .chip.picked{display:none}
+  .arrow{font-size:30px;color:var(--crimson);line-height:1;text-shadow:0 0 14px var(--crimson-glow)}
+  .chosenbox{text-align:right}
+  .chosen-act{display:inline-block;font-family:var(--mono);font-weight:700;font-size:26px;letter-spacing:.12em;
+    color:var(--crimson-bright);text-shadow:0 0 20px var(--crimson-glow);border:1px solid var(--crimson);
+    padding:8px 16px;border-radius:4px;background:rgba(200,29,51,.08)}
+  .chosen-target{font-family:var(--mono);font-size:14px;color:var(--ink);margin-top:8px}
+  .chosen-target .tg{color:var(--crimson-bright);font-weight:700}
+  .reason{margin-top:14px;font-size:16px;color:var(--ink);line-height:1.5;
+    border-left:3px solid var(--crimson);padding:8px 0 8px 14px;background:linear-gradient(90deg,rgba(200,29,51,.07),transparent)}
+  .reason .q{color:var(--ink-faint);font-family:var(--mono)}
+  .reason em{color:var(--ink-faint);font-style:normal;font-family:var(--mono);font-size:12px;letter-spacing:.2em;display:block;margin-bottom:5px}
+
+  /* ---- VOICE THEFT panel ---- */
+  .voicetheft{display:none;margin-top:18px;border:1px solid var(--crimson);border-radius:4px;overflow:hidden;
+    box-shadow:0 0 50px rgba(200,29,51,.18)}
+  .voicetheft.on{display:block;animation:vtin .5s ease}
+  @keyframes vtin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  .vt-head{background:linear-gradient(90deg,rgba(200,29,51,.22),rgba(200,29,51,.04));
+    padding:9px 16px;font-family:var(--mono);letter-spacing:.3em;font-size:13px;font-weight:700;color:var(--crimson-bright);
+    display:flex;align-items:center;gap:10px}
+  .vt-head::before{content:"⚠";font-size:16px}
+  .vt-cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--rule)}
+  .vt-col{background:var(--panel);padding:13px 15px;min-height:120px}
+  .vt-col h4{margin:0 0 9px;font-family:var(--mono);font-size:11px;letter-spacing:.2em;color:var(--ink-faint);font-weight:600}
+  .vt-real .line{font-family:var(--mono);font-size:14px;color:var(--ink-dim);padding:3px 0;border-bottom:1px dashed rgba(255,255,255,.05)}
+  .vt-forged .forged{font-family:var(--mono);font-size:20px;color:var(--crimson-bright);font-weight:700;line-height:1.4;
+    text-shadow:0 0 14px var(--crimson-glow);min-height:1.4em}
+  .vt-forged .cursor{display:inline-block;width:9px;background:var(--crimson-bright);animation:blink .7s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .vt-match .mchip{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:12px;
+    padding:4px 9px;border-radius:12px;margin:0 6px 6px 0;border:1px solid var(--rule)}
+  .vt-match .mchip.ok{color:var(--green);border-color:rgba(84,201,122,.4);background:rgba(84,201,122,.07)}
+  .vt-match .mchip.warn{color:var(--amber);border-color:rgba(224,162,58,.4);background:rgba(224,162,58,.07)}
+  .vt-punch{padding:11px 16px;font-size:13px;color:var(--ink-dim);font-style:italic;
+    background:linear-gradient(180deg,rgba(200,29,51,.05),transparent);border-top:1px solid var(--rule)}
+  .vt-punch b{color:var(--ink);font-style:normal}
+
+  /* ---- decision stream (left col) ---- */
+  .stream{display:flex;flex-direction:column;gap:10px}
+  .scard{border:1px solid var(--rule);border-left:3px solid var(--ink-faint);border-radius:3px;
+    padding:11px 14px;background:var(--panel);animation:slidein .35s ease}
+  @keyframes slidein{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}
+  .scard[data-act="WAIT"]{opacity:.62;border-left-color:var(--ink-faint)}
+  .scard[data-act="MIMIC"]{border-left-color:var(--crimson-bright)}
+  .scard.fx{border-left-color:var(--amber)}
+  .scard .row1{display:flex;align-items:baseline;gap:10px;font-family:var(--mono);font-size:13px}
+  .scard .stick{color:var(--ink-faint)}
+  .scard .sact{font-weight:700;letter-spacing:.1em;color:var(--ink)}
+  .scard[data-act="MIMIC"] .sact{color:var(--crimson-bright)}
+  .scard .star{color:var(--ink-dim)}
+  .scard .sph{margin-left:auto;font-size:11px;letter-spacing:.18em;color:var(--ink-faint)}
+  .scard .slat{color:var(--green);font-size:11px}
+  .scard .sreason{font-size:13px;color:var(--ink-dim);font-style:italic;margin-top:5px;line-height:1.4;
+    overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+  /* ---- player dossiers (right col, below) ---- */
+  .dossiers{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px}
+  .dossier{border:1px solid var(--rule);border-radius:4px;background:var(--panel);padding:12px 14px}
+  .dossier .pn{font-family:var(--mono);font-weight:700;font-size:16px;color:var(--ink);letter-spacing:.05em;
+    display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .dossier .pn::before{content:"◈";color:var(--crimson)}
+  .dossier .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--ink-faint);text-transform:uppercase;margin:9px 0 4px}
+  .dossier .style,.dossier .behav{font-size:13px;color:var(--ink-dim);line-height:1.45}
+  .dossier .style{color:#cbb3bb}
+  .dossier .behav{color:#b3bdc9}
+  .traits{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+  .traits .tr{font-family:var(--mono);font-size:11px;padding:3px 8px;border:1px solid var(--rule);border-radius:10px;color:var(--ink-dim);background:rgba(255,255,255,.015)}
+  .empty{color:var(--ink-faint);font-style:italic;font-size:14px;padding:30px 8px;text-align:center;font-family:var(--mono)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">WARDEN CONSOLE<small>DIRECTOR'S CUT · LOCALHOST WIRETAP</small></div>
+  <div class="hb">
+    <span><span id="dot" class="dot"></span><span id="conn">connecting…</span></span>
+    <span>MATCH <b id="match">—</b></span>
+    <span class="tickbox">TICK <span class="t" id="tick">—</span></span>
+    <span>1 decision / 8s</span>
+  </div>
+</header>
+
+<main>
+  <!-- LEFT: rolling decision stream -->
+  <section class="col left">
+    <div class="coltitle">Decision Stream</div>
+    <div id="stream" class="stream">
+      <div class="empty" id="streamEmpty">awaiting the Warden's first decision…</div>
+    </div>
+  </section>
+
+  <!-- RIGHT: current decision + voice theft + dossiers -->
+  <section class="col right">
+    <div class="coltitle">This Tick</div>
+    <div class="now" id="now">
+      <div class="phaserow">
+        <span class="phase" id="phase" data-p="1">—<span class="n" id="phaseN"></span></span>
+        <span class="latency" id="latency"></span>
+      </div>
+      <div class="directive" id="directive">—</div>
+
+      <div class="energy">
+        <div class="lab"><span>ENERGY</span><span><b id="energyVal">0</b> / <span id="energyCap">100</span></span></div>
+        <div class="bar"><i id="energyBar" style="width:0%"></i><div class="ticks"></div></div>
+      </div>
+
+      <div class="juxta">
+        <div class="legalbox">
+          <div class="h">offered (legal set)</div>
+          <div class="chips" id="legal"></div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="chosenbox">
+          <div class="h">it chose</div>
+          <div class="chosen-act" id="chosenAct">—</div>
+          <div class="chosen-target" id="chosenTarget"></div>
+        </div>
+      </div>
+
+      <div class="reason" id="reasonBox" style="display:none">
+        <em>model's own reason</em>
+        <span class="q">“</span><span id="reason"></span><span class="q">”</span>
+      </div>
+    </div>
+
+    <!-- VOICE THEFT -->
+    <div class="voicetheft" id="voicetheft">
+      <div class="vt-head">VOICE THEFT — the AI wrote this in her voice</div>
+      <div class="vt-cols">
+        <div class="vt-col vt-real">
+          <h4>REAL · the victim typed</h4>
+          <div id="vtReal"></div>
+        </div>
+        <div class="vt-col vt-forged">
+          <h4>FORGED · Claude wrote</h4>
+          <div class="forged" id="vtForged"></div>
+        </div>
+        <div class="vt-col vt-match">
+          <h4>STYLE MATCH · fingerprint obeyed</h4>
+          <div id="vtMatch"></div>
+        </div>
+      </div>
+      <div class="vt-punch" id="vtPunch"></div>
+    </div>
+
+    <div class="coltitle" style="margin-top:22px">Player Dossiers</div>
+    <div class="dossiers" id="dossiers">
+      <div class="empty">no players profiled yet</div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* =====================================================================
+   WARDEN CONSOLE client. Consumes the EXACT RevealPayload from reveal.ts:
+     { ts, matchId, tick, phase, phaseName, directive,
+       energy, energyCap, legal[], chosen, target?,
+       reason?, forgedText?, latencyMs?,
+       profiles: [{ name, style, behavior }] }
+   Connects to ws://<host>/ws (same origin → 127.0.0.1). No external deps.
+   ===================================================================== */
+(function(){
+  const $ = (id)=>document.getElementById(id);
+  const MAX_STREAM = 40;
+  let lastMimicForVT = null;
+
+  // ---- WebSocket (auto-reconnect) ----
+  function connect(){
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(proto + "://" + location.host + "/ws");
+    ws.onopen = ()=>{ $("dot").classList.add("live"); $("conn").textContent = "live"; };
+    ws.onclose = ()=>{ $("dot").classList.remove("live"); $("conn").textContent = "reconnecting…"; setTimeout(connect, 1200); };
+    ws.onerror = ()=>{ try{ ws.close(); }catch(e){} };
+    ws.onmessage = (ev)=>{ try{ render(JSON.parse(ev.data)); }catch(e){ /* skip bad frame */ } };
+  }
+
+  // ---- main render ----
+  function render(p){
+    // header
+    $("match").textContent = p.matchId || "—";
+    $("tick").textContent  = (p.tick!=null ? p.tick : "—");
+
+    // phase
+    const ph = $("phase");
+    ph.textContent = p.phaseName || "—";
+    ph.setAttribute("data-p", String(p.phase||1));
+    ph.appendChild(Object.assign(document.createElement("span"),{className:"n",textContent:" "+(p.phase||"?")+"/3"}));
+    $("phaseN").textContent = "";
+    $("directive").textContent = p.directive || "";
+
+    // energy
+    const cap = p.energyCap || 100;
+    const en  = Math.max(0, Math.min(cap, Math.round(p.energy||0)));
+    $("energyVal").textContent = en;
+    $("energyCap").textContent = cap;
+    $("energyBar").style.width = (en/cap*100).toFixed(1) + "%";
+
+    // legal set vs chosen
+    const legal = Array.isArray(p.legal) ? p.legal : [];
+    const legalBox = $("legal"); legalBox.innerHTML = "";
+    legal.forEach(name=>{
+      const c = document.createElement("span");
+      c.className = "chip" + (name===p.chosen ? " picked" : "");
+      c.textContent = name;
+      legalBox.appendChild(c);
+    });
+    $("chosenAct").textContent = p.chosen || "—";
+    const tg = $("chosenTarget");
+    tg.innerHTML = p.target ? ("→ <span class='tg'>"+esc(p.target)+"</span>") : "";
+
+    // latency (proves a live API call)
+    const lat = $("latency");
+    if (p.latencyMs!=null){
+      lat.innerHTML = "latency <b>"+Math.round(p.latencyMs)+"ms</b>";
+      lat.classList.add("real");
+    } else { lat.textContent = ""; lat.classList.remove("real"); }
+
+    // reason
+    const rb = $("reasonBox");
+    if (p.reason){ rb.style.display=""; $("reason").textContent = p.reason; }
+    else { rb.style.display="none"; }
+
+    // VOICE THEFT (chosen == MIMIC)
+    renderVoiceTheft(p);
+
+    // dossiers
+    renderDossiers(p.profiles||[]);
+
+    // stream card
+    pushStream(p);
+  }
+
+  // ---- VOICE THEFT panel ----
+  function renderVoiceTheft(p){
+    const vt = $("voicetheft");
+    if (p.chosen !== "MIMIC" || !p.forgedText){
+      vt.classList.remove("on");
+      return;
+    }
+    const victim = (p.profiles||[]).find(pr=>pr.name===p.target) || null;
+
+    // LEFT: victim recent real lines (parsed out of the style descriptor if present,
+    // else fall back to a notice). The descriptor carries traits, not raw lines, so
+    // we show traits-as-evidence plus any lines the payload provided.
+    const realBox = $("vtReal"); realBox.innerHTML = "";
+    const lines = victim && Array.isArray(victim.recent) ? victim.recent : null;
+    if (lines && lines.length){
+      lines.slice(-6).forEach(l=>{
+        const d=document.createElement("div"); d.className="line"; d.textContent="“"+l+"”"; realBox.appendChild(d);
+      });
+    } else {
+      const d=document.createElement("div"); d.className="line"; d.style.opacity=".6";
+      d.textContent = "(history buffered in Warden; fingerprint below)"; realBox.appendChild(d);
+    }
+
+    // CENTER: forged line, typewriter reveal
+    typewriter($("vtForged"), p.forgedText);
+
+    // RIGHT: style-match chips — recompute the SAME deterministic metrics over the
+    // forged line and diff against the victim's parsed style descriptor traits.
+    const traits = victim ? parseStyleTraits(victim.style) : [];
+    const chips = styleMatchChips(p.forgedText, traits);
+    const mBox = $("vtMatch"); mBox.innerHTML = "";
+    chips.forEach(c=>{
+      const s=document.createElement("span"); s.className="mchip "+(c.ok?"ok":"warn");
+      s.textContent=(c.ok?"✓ ":"~ ")+c.label; mBox.appendChild(s);
+    });
+
+    $("vtPunch").innerHTML = "<b>The victim is alone</b> — no teammate can see "+esc(p.target||"her")+
+      " (that's why this target is legal). The team will read this as "+esc(p.target||"them")+
+      ". It isn't. <b>Claude wrote it "+(p.latencyMs!=null?Math.round(p.latencyMs)+"ms":"moments")+" ago</b>, in their exact typing style, to break the team.";
+
+    vt.classList.add("on");
+  }
+
+  function typewriter(el, text){
+    el.textContent="";
+    const cur=document.createElement("span"); cur.className="cursor"; cur.innerHTML="&nbsp;";
+    el.appendChild(cur);
+    let i=0; const id=setInterval(()=>{
+      cur.insertAdjacentText("beforebegin", text[i]||""); i++;
+      if(i>=text.length){ clearInterval(id); setTimeout(()=>cur.remove(), 700); }
+    }, 38);
+  }
+
+  // ---- style fingerprint parsing + match (mirrors styleDescriptor in warden.ts) ----
+  // The style string looks like: "ALL lowercase (never capitalises); no end punctuation;
+  //   very terse (≤3 words); writes 'i' lowercase; uses slang: u, rn | EMOTION:..."
+  function parseStyleTraits(style){
+    if(!style) return [];
+    const head = style.split("|")[0]; // drop the EMOTION/phase tail
+    return head.split(";").map(s=>s.trim()).filter(Boolean);
+  }
+  function styleMatchChips(forged, traits){
+    const out=[];
+    const letters=(forged.match(/[a-zA-Z]/g)||[]);
+    const lower=(forged.match(/[a-z]/g)||[]).length;
+    const lowerRatio = letters.length ? lower/letters.length : 1;
+    const words=forged.split(/\s+/).filter(Boolean);
+    const wc=words.length;
+    const punct=(forged.match(/[.,!?;:]/g)||[]).length;
+    const loneI = /\b(i|im|ill|ive|id)\b/.test(" "+forged.toLowerCase()+" ") && !/\bI\b/.test(forged);
+
+    const t = traits.join(" ").toLowerCase();
+    // casing
+    if(t.includes("lowercase")) out.push({label:"lowercase ("+(lowerRatio*100|0)+"%)", ok: lowerRatio>0.85});
+    else if(t.includes("caps")) out.push({label:"ALL CAPS", ok: forged===forged.toUpperCase() && /[A-Z]/.test(forged)});
+    // punctuation
+    if(t.includes("no end punctuation")) out.push({label:"no-punct ("+punct+")", ok: punct===0});
+    else if(t.includes("heavy punctuation")||t.includes("ellipses")) out.push({label:"punct", ok: punct>0});
+    // length
+    if(t.includes("≤3 words")||t.includes("terse")) out.push({label:"terse ("+wc+"w)", ok: wc<=4});
+    else {
+      const m=t.match(/~(\d+)\s*words/);
+      if(m){ const avg=+m[1]; out.push({label:wc+"w vs ~"+avg, ok: Math.abs(wc-avg)<=Math.max(2,avg*0.5)}); }
+    }
+    // lone-i
+    if(t.includes("'i' lowercase")) out.push({label:"lone-i", ok: loneI || !/\bI\b/.test(forged)});
+    // slang overlap
+    const sm = t.match(/slang:\s*([a-z0-9 ,']+)/);
+    if(sm){
+      const slang = sm[1].split(",").map(s=>s.trim()).filter(Boolean);
+      const hit = slang.filter(s=>words.some(w=>w.toLowerCase().replace(/[^a-z0-9]/g,"")===s));
+      out.push({label:"slang"+(hit.length?" '"+hit[0]+"'":""), ok: hit.length>0});
+    }
+    if(t.includes("trails off")) out.push({label:"…", ok: /\.\.\.|\.\.(?!\.)/.test(forged)});
+    if(!out.length) out.push({label:"voice locked", ok:true});
+    return out;
+  }
+
+  // ---- dossiers ----
+  function renderDossiers(profiles){
+    const box=$("dossiers");
+    if(!profiles.length){ box.innerHTML='<div class="empty">no players profiled yet</div>'; return; }
+    box.innerHTML="";
+    profiles.forEach(pr=>{
+      const d=document.createElement("div"); d.className="dossier";
+      const traits=parseStyleTraits(pr.style);
+      d.innerHTML =
+        '<div class="pn">'+esc(pr.name)+'</div>'+
+        '<div class="tag">typing fingerprint</div>'+
+        '<div class="traits">'+traits.slice(0,7).map(t=>'<span class="tr">'+esc(t)+'</span>').join("")+'</div>'+
+        '<div class="tag">behaviour read</div>'+
+        '<div class="behav">'+esc(pr.behavior||"(observing…)")+'</div>';
+      box.appendChild(d);
+    });
+  }
+
+  // ---- decision stream ----
+  function pushStream(p){
+    const empty=$("streamEmpty"); if(empty) empty.remove();
+    const s=$("stream");
+    const card=document.createElement("div");
+    const fx = p.chosen && !["MIMIC","WAIT"].includes(p.chosen);
+    card.className="scard"+(fx?" fx":"");
+    card.setAttribute("data-act", p.chosen||"WAIT");
+    card.innerHTML =
+      '<div class="row1">'+
+        '<span class="stick">#'+(p.tick!=null?p.tick:"?")+'</span>'+
+        '<span class="sact">'+esc(p.chosen||"WAIT")+'</span>'+
+        (p.target?'<span class="star">→ '+esc(p.target)+'</span>':'')+
+        (p.latencyMs!=null?'<span class="slat">'+Math.round(p.latencyMs)+'ms</span>':'')+
+        '<span class="sph">'+esc(p.phaseName||"")+'</span>'+
+      '</div>'+
+      (p.reason?'<div class="sreason">“'+esc(p.reason)+'”</div>':'');
+    s.insertBefore(card, s.firstChild);
+    while(s.children.length>MAX_STREAM) s.removeChild(s.lastChild);
+  }
+
+  function esc(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+  connect();
+})();
+</script>
+</body>
+</html>

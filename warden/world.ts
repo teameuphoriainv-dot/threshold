@@ -2,8 +2,8 @@
 // it should forge AS a victim only when no other player can see that victim,
 // so the forged message reliably arrives UNVERIFIED (the trust payoff, PRD §5.1).
 
-type Wall = { x: number; z: number; w: number; d: number };
-const WALLS: Wall[] = [
+export type Wall = { x: number; z: number; w: number; d: number };
+export const WALLS: Wall[] = [
   { x: 0, z: -35, w: 80, d: 1.2 }, { x: 0, z: 35, w: 80, d: 1.2 },
   { x: -40, z: 0, w: 1.2, d: 72 }, { x: 40, z: 0, w: 1.2, d: 72 },
   { x: -9, z: -10, w: 14, d: 1 }, { x: 9, z: -10, w: 14, d: 1 },

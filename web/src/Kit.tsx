@@ -60,6 +60,13 @@ const MODELS = {
   // dying lights
   lamp1: "/models/lamp1.glb",
   chandelier1: "/models/chandelier1.glb",
+  // CC0 Poly Haven env additions (.gltf + .bin + textures/ — useGLTF loads .gltf directly)
+  dead_tree_trunk: "/models/env/dead_tree_trunk/dead_tree_trunk.gltf",
+  dead_quiver_trunk: "/models/env/dead_quiver_trunk/dead_quiver_trunk.gltf",
+  dead_tree_trunk_02: "/models/env/dead_tree_trunk_02/dead_tree_trunk_02.gltf",
+  boulder_01: "/models/env/boulder_01/boulder_01.gltf",
+  fern_02: "/models/env/fern_02/fern_02.gltf",
+  marble_bust_01: "/models/env/marble_bust_01/marble_bust_01.gltf",
 } as const;
 
 // ---- basin / layout constants ----
@@ -267,13 +274,17 @@ function forestPlacements(): TreePick[] {
     if (inClearRing(x, z)) continue;                        // clear rings stay open
     if (r() > density(rad) * 0.85) continue;                // density gate
 
-    // weighted model pick: quiver 55 / dead 18 / pillar 17 / branches 10
+    // weighted model pick: quiver 42 / dead 14 / pillar 14 / branches 8 +
+    //   CC0 Poly Haven dead trunks for variety: dead_tree 9 / quiver_trunk 7 / dead_02 6
     const w = r();
     let model: number;
-    if (w < 0.55) model = 0;        // tree_quiver1
-    else if (w < 0.73) model = 1;   // tree_dead1
-    else if (w < 0.90) model = 2;   // pillar
-    else model = 3;                 // branches1
+    if (w < 0.42) model = 0;        // tree_quiver1
+    else if (w < 0.56) model = 1;   // tree_dead1
+    else if (w < 0.70) model = 2;   // pillar
+    else if (w < 0.78) model = 3;   // branches1
+    else if (w < 0.87) model = 4;   // dead_tree_trunk (Poly Haven)
+    else if (w < 0.94) model = 5;   // dead_quiver_trunk (Poly Haven)
+    else model = 6;                 // dead_tree_trunk_02 (Poly Haven)
 
     const rotY = r() * Math.PI * 2;
     const sink = -0.1 - r() * 0.3;   // -0.1..-0.4 (rooted look)
@@ -283,14 +294,20 @@ function forestPlacements(): TreePick[] {
     if (model === 0) scale = 1.6 + r() * 1.4;                       // height ~4.5-8m
     else if (model === 1) { scale = 1.2 + r() * 1.0; tiltZ = 0.2 + r() * 1.2; } // fallen/leaning trunk
     else if (model === 2) scale = (3.0 + edgeT * 2.0) + (r() - 0.5) * 0.8;      // height ~6-10m, taller at edge
-    else { scale = 1.0 + r() * 1.0; }                              // branches debris, low
+    else if (model === 3) { scale = 1.0 + r() * 1.0; }             // branches debris, low
+    else if (model === 4) scale = (4.0 + edgeT * 2.0) + (r() - 0.5) * 1.0;      // dead_tree_trunk: standing snag, taller at edge
+    else if (model === 5) { scale = 3.0 + r() * 1.8; tiltZ = (r() - 0.5) * 0.5; } // dead_quiver_trunk: stout, slight lean
+    else { scale = (3.5 + edgeT * 2.0) + (r() - 0.5) * 1.0; tiltZ = (r() - 0.5) * 0.3; } // dead_tree_trunk_02: tall snag, faint lean
     out.push({ x, z, rotY, scale, sink, tiltZ, model });
   }
   return out;
 }
 
 function DeadForest() {
-  const gltfs = useGLTF([MODELS.tree_quiver1, MODELS.tree_dead1, MODELS.pillar, MODELS.branches1]);
+  const gltfs = useGLTF([
+    MODELS.tree_quiver1, MODELS.tree_dead1, MODELS.pillar, MODELS.branches1,
+    MODELS.dead_tree_trunk, MODELS.dead_quiver_trunk, MODELS.dead_tree_trunk_02,
+  ]);
   const scenes = gltfs.map((g) => g.scene);
   const placements = useMemo(() => forestPlacements(), []);
   const lists = useMemo(
@@ -301,7 +318,8 @@ function DeadForest() {
         mi === 0 ? 1 / (info.size.y || 1) * 1.0 :   // tree_quiver1: scale is metres of height factor
         mi === 1 ? 1 / Math.max(info.size.x, info.size.z, 0.001) : // tree_dead1: by length
         mi === 2 ? 1 / (info.size.y || 1) :          // pillar: scale = target height in m
-        normTo(info, 1.2);                           // branches1: ~1.2m base
+        mi === 3 ? normTo(info, 1.2) :               // branches1: ~1.2m base
+        1 / (info.size.y || 1);                      // Poly Haven trunks (4,5,6): scale = target height in m
       const mats = placements
         .filter((p) => p.model === mi)
         .map((p) => {
@@ -351,9 +369,10 @@ type ClutterPick = { x: number; z: number; rotY: number; tiltZ: number; scale: n
 const CLUTTER_MODELS = [
   MODELS.prop_roots2, MODELS.prop_root, MODELS.prop_stump, MODELS.stump2,
   MODELS.prop_log, MODELS.moonrock1, MODELS.moonrock2, MODELS.prop_rock,
+  MODELS.boulder_01, // CC0 Poly Haven boulder — index 8
 ];
 // targets (m) + share thresholds, indexed to CLUTTER_MODELS.
-const CLUTTER_TARGET = [2.4, 1.8, 1.4, 1.5, 3.5, 0.7, 0.7, 0.45];
+const CLUTTER_TARGET = [2.4, 1.8, 1.4, 1.5, 3.5, 0.7, 0.7, 0.45, 2.2];
 
 function clutterPlacements(): ClutterPick[] {
   const r = rng(1337);
@@ -369,23 +388,25 @@ function clutterPlacements(): ClutterPick[] {
     const keep = 0.25 + density(rad) * 0.6;                 // clutter everywhere, denser at edge
     if (r() > keep) continue;
 
-    // weighted model pick: roots2 22 / root 20 / propStump 14 / stump2 12 / log 10
-    //   / moonrock1 8 / moonrock2 8 / rock 6
+    // weighted model pick: roots2 20 / root 18 / propStump 13 / stump2 11 / log 9
+    //   / moonrock1 8 / moonrock2 8 / rock 6 / boulder_01 7 (CC0 Poly Haven)
     const w = r();
     let model: number;
-    if (w < 0.22) model = 0;
-    else if (w < 0.42) model = 1;
-    else if (w < 0.56) model = 2;
-    else if (w < 0.68) model = 3;
-    else if (w < 0.78) model = 4;
-    else if (w < 0.86) model = 5;
-    else if (w < 0.94) model = 6;
-    else model = 7;
+    if (w < 0.20) model = 0;
+    else if (w < 0.38) model = 1;
+    else if (w < 0.51) model = 2;
+    else if (w < 0.62) model = 3;
+    else if (w < 0.71) model = 4;
+    else if (w < 0.79) model = 5;
+    else if (w < 0.87) model = 6;
+    else if (w < 0.93) model = 7;
+    else model = 8;                                          // boulder_01
 
     const rotY = r() * Math.PI * 2;
     let tiltZ = 0;
     if (model === 1) tiltZ = (r() - 0.5) * 0.5;            // single root, small tilt
     if (model === 4) tiltZ = Math.PI / 2 + (r() - 0.5) * 0.4; // log laid flat (fallen)
+    if (model === 8) tiltZ = (r() - 0.5) * 0.25;           // boulder, slight settle tilt
     const scale = 0.7 + r() * 0.8;                          // 0.7-1.5 jitter
     const sink = -0.05 - r() * 0.2;
     out.push({ x, z, rotY, tiltZ, scale, sink, model });
@@ -461,6 +482,68 @@ function GothicChamber() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cabinet.scene, commode.scene, table.scene, chair.scene]);
   return <>{clones.map((o, i) => <primitive key={i} object={o} />)}</>;
+}
+
+// decayed marble statuary — a single direct-clone bust sunk into the gothic arc,
+// tilted like a toppled monument. CC0 Poly Haven marble_bust_01 (~0.6m native).
+// Tinted hard toward the cold palette so the warm marble reads as cold dead stone.
+function GothStatuary() {
+  const { scene } = useGLTF(MODELS.marble_bust_01);
+  const node = useMemo(() => {
+    const info = moduleInfo(scene);
+    const norm = normTo(info, 1.6);            // ~1.6m plinth-height bust
+    const n = cloneTinted(info, scene, 0.45);  // match goth furniture tint
+    // tucked at the south-east edge of the goth cluster, half-sunk + heeled over.
+    n.position.set(4.2, -0.45, 12.6);
+    n.rotation.order = "YXZ";
+    n.rotation.y = -0.9;
+    n.rotation.z = 0.22;                        // toppling lean
+    n.rotation.x = -0.08;
+    n.scale.setScalar(norm);
+    return n;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene]);
+  return <primitive object={node} />;
+}
+
+// low ground ferns — a few small instanced clumps dressing the basin floor near the
+// convergence. CC0 Poly Haven fern_02 (alpha-MASK fronds; the loaded material keeps
+// its alphaTest through tintMaterial). Tinted hard so the green never reads "alive".
+type FernPick = { x: number; z: number; rotY: number; scale: number };
+function fernPlacements(): FernPick[] {
+  const r = rng(4242);
+  const out: FernPick[] = [];
+  for (let i = 0; i < 120 && out.length < 26; i++) {
+    const x = (r() - 0.5) * 40;
+    const z = 2 + (r() - 0.5) * 36;            // bias around the basin floor / chamber apron
+    const rad = Math.hypot(x, z);
+    if (rad > 22 || rad < 5) continue;         // ground-floor band only, clear of center
+    const [cx, cz] = collide(x, z, 0.6);
+    if (Math.hypot(cx - x, cz - z) > 0.01) continue;
+    if (inClearRing(x, z)) continue;
+    if (r() > 0.5) continue;                    // sparse
+    out.push({ x, z, rotY: r() * Math.PI * 2, scale: 0.45 + r() * 0.4 });
+  }
+  return out;
+}
+
+function BasinFerns() {
+  const { scene } = useGLTF(MODELS.fern_02);
+  const placements = useMemo(() => fernPlacements(), []);
+  const list = useMemo(() => {
+    const info = moduleInfo(scene);
+    const norm = normTo(info, 0.9);            // small ~0.9m clumps
+    const mats = placements.map((p) => {
+      const s = norm * p.scale;
+      return new THREE.Matrix4()
+        .makeTranslation(p.x, -0.05, p.z)
+        .multiply(new THREE.Matrix4().makeRotationY(p.rotY))
+        .multiply(new THREE.Matrix4().makeScale(s, s, s));
+    });
+    // tint 0.7 — drain the green hard so the fronds read as cold, sickly dead growth
+    return buildInstances(info, mats, 0.7);
+  }, [scene, placements]);
+  return <Rendered list={list} />;
 }
 
 // ============================================================
@@ -583,7 +666,7 @@ function Gated({ on, fallback, children }: { on: boolean; fallback: ReactNode; c
 export const Cliffs = () => <Gated on={KIT.cliffs} fallback={<BoxBasin />}><CliffRing /></Gated>;
 export const Forest = () => <Gated on={KIT.forest} fallback={null}><DeadForest /><HeroTrees /></Gated>;
 export const Clutter = () => <Gated on={KIT.clutter} fallback={null}><GroundClutter /></Gated>;
-export const Gothic = () => <Gated on={KIT.gothic} fallback={null}><GothicChamber /></Gated>;
+export const Gothic = () => <Gated on={KIT.gothic} fallback={null}><GothicChamber /><GothStatuary /><BasinFerns /></Gated>;
 export const DyingLights = () => <Gated on={KIT.lanterns} fallback={null}><Lanterns /></Gated>;
 
 // everything at once — drop into the World (Game.tsx renders <Kit/>).

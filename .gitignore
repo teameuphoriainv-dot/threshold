@@ -12,3 +12,16 @@ warden/*.log
 stdb/spacetimedb/agentdb.rvf
 stdb/spacetimedb/agentdb.rvf.lock
 web/.vite/
+
+# agentdb / ruflo runtime artifacts (anywhere)
+agentdb.rvf
+agentdb.rvf.lock
+**/agentdb.rvf
+**/agentdb.rvf.lock
+
+# scratch dirs / build logs
+tmp/
+design/
+
+# warden demo telemetry log (local only)
+warden/reveal.jsonl

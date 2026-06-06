@@ -809,6 +809,122 @@
   100% { background-position-y: 4px; }
 }
 
+/* ============================================================================
+   IN-GAME HUD REFINEMENT  (layers on top of index.css — loaded AFTER it)
+   ──────────────────────────────────────────────────────────────────────────
+   index.css owns the base #hud / #chat / #roster / .screen rules. This block
+   ONLY sharpens classes the live game already renders (Game.tsx: #hud, #chat,
+   #log, .msg/.name/.verified/.unknown, #roster .who/.seen/.unseen/.dot,
+   .panel/.title/.sub/.n, .screen/.box/.tag/.btn). Every selector is scoped
+   under a real id ancestor that ONLY the in-match HUD mounts, so nothing bleeds
+   into the lobby surfaces that reuse the same short class names. Goal: HUD
+   readability + Warden/whisper trust legibility + low-light contrast against
+   the volumetric fog and bloom behind the DOM. No new classes are invented.
+   ========================================================================== */
+
+/* --- HUD panels: lift the slab so text survives fog/bloom, add a crimson
+       hairline-top so each panel reads as a discrete "instrument" ---------- */
+#hud .panel {
+  background: var(--wh-slab);
+  border-color: var(--wh-hairline);
+  /* a faint crimson capline + deeper drop so the panel floats off the world */
+  box-shadow:
+    0 2px 22px rgba(4, 0, 2, 0.55),
+    0 0 18px rgba(150, 15, 30, 0.16),
+    inset 0 1px 0 rgba(255, 80, 95, 0.10),
+    inset 0 0 0 1px var(--wh-hairline-soft);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+/* The title row — push tracking + a tighter ember-cooled shadow for crispness. */
+#hud #top .title {
+  text-shadow:
+    0 0 14px rgba(255, 47, 68, 0.5),
+    0 1px 2px rgba(0, 0, 0, 0.9);
+}
+#hud #top .sub { color: var(--wh-ink-dim); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); }
+/* The big anchor counter — make the single most glanceable number pop. */
+#hud #anchors .n {
+  text-shadow: 0 0 14px rgba(255, 47, 68, 0.6), 0 0 3px rgba(255, 120, 135, 0.5);
+}
+
+/* --- Roster trust readout: the seen/unseen split is a core trust signal ---- */
+#hud #roster .who { padding: 3px 0; }
+/* "in sight" = warm/safe, lift contrast + faint glow so verified reads instantly. */
+#hud #roster .seen {
+  color: var(--wh-amber);
+  text-shadow: 0 0 8px rgba(255, 196, 134, 0.45);
+}
+/* "unverified" = the dread state — desaturated cold red, deliberately un-glowy
+   so it feels colder/less trustworthy than the warm "in sight". */
+#hud #roster .unseen {
+  color: var(--wh-untrust-dim);
+  letter-spacing: 0.04em;
+  opacity: 0.92;
+}
+/* The presence dots get a soft bloom matching their inline color. */
+#hud #roster .dot {
+  box-shadow: 0 0 7px currentColor, 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+/* --- Chat = the whisper channel. This is where the Warden wears your friends'
+       voices, so the VERIFIED / UNVERIFIED tag is the load-bearing UI. ------- */
+#chat #log .msg {
+  /* slightly denser slab + crisper edge so 13px mono survives the bloom */
+  background: rgba(14, 8, 10, 0.78);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+#chat #log .msg .name { letter-spacing: 0.02em; text-shadow: 0 0 6px currentColor; }
+/* VERIFIED (seen now): warm ember, glowing — "this voice has a body in sight". */
+#chat #log .msg .verified {
+  color: var(--wh-ember);
+  font-weight: bold;
+  text-shadow: 0 0 9px rgba(255, 217, 168, 0.75), 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+/* UNVERIFIED: cold crimson, NO glow — could be a teammate, could be the Warden.
+   Kept readable (>=AA on the dark slab) but tonally "wrong" vs the warm verified. */
+#chat #log .msg .unknown {
+  color: var(--wh-untrust);
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+/* The live (newest) unverified line earns a faint untrust pulse — draws the eye
+   to the message you most need to judge, without ever labelling it as fake. */
+#chat #log .msg:nth-last-child(1):has(.unknown) {
+  animation:
+    whisperIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both,
+    whUntrustPulse 2.4s ease-in-out 0.6s infinite;
+}
+
+/* --- Full-screen takeover (waiting / end "screen box"): deepen the vignette
+       and steady the body copy so lore reads in low light. ------------------ */
+.screen .box { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85); }
+.screen .tag { color: var(--wh-ink-dim); }
+
+/* --- Absorption-report Warden whisper line: the literal Warden voice. Give it
+       a cold spectral cast distinct from the warm survivor UI so the entity's
+       words feel like they arrive from elsewhere. (Class is rendered with
+       wh-flicker; we only restyle, the flicker animation already runs.) ----- */
+.wh-ar-whisper {
+  color: var(--wh-spectral);
+  text-shadow:
+    0 0 12px rgba(154, 134, 255, 0.45),
+    0 1px 3px rgba(0, 0, 0, 0.9);
+  letter-spacing: 0.06em;
+}
+
+/* --- Overlay vignettes: pull the edges deeper so the bright R3F bloom can't
+       wash the framed UI. These primitives are mine; this only deepens them. - */
+.wh-vignette-soft {
+  box-shadow: inset 0 0 220px 64px rgba(5, 0, 2, 0.9);
+}
+
+/* failing-trust pulse for the live unverified whisper (cold, subtle). */
+@keyframes whUntrustPulse {
+  0%, 100% { box-shadow: -3px 0 10px -4px rgba(255, 97, 114, 0.28); }
+  50%      { box-shadow: -3px 0 16px -2px rgba(255, 97, 114, 0.55); }
+}
+
 /* ----------------------------------------------------------------------------
    ACCESSIBILITY — honour reduced motion (index.css does the global kill; this
    re-asserts for our keyframes and disables the lore stagger delays so content
@@ -827,4 +943,9 @@
     animation: none !important;
   }
   .wh-typewriter { border-right-color: transparent; white-space: normal; }
+
+  /* in-game HUD: kill the live-unverified pulse, keep the static glow legible */
+  #chat #log .msg:nth-last-child(1):has(.unknown) {
+    animation: whisperIn 0.001ms both !important;
+  }
 }

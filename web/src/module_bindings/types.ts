@@ -10,6 +10,16 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const AbsorptionReport = __t.object("AbsorptionReport", {
+  id: __t.u64(),
+  matchId: __t.u64(),
+  username: __t.string(),
+  felt: __t.string(),
+  truth: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type AbsorptionReport = __Infer<typeof AbsorptionReport>;
+
 export const Account = __t.object("Account", {
   username: __t.string(),
   pinHash: __t.string(),
@@ -36,6 +46,16 @@ export const Anchor = __t.object("Anchor", {
   placed: __t.bool(),
 });
 export type Anchor = __Infer<typeof Anchor>;
+
+export const AnchorAssignment = __t.object("AnchorAssignment", {
+  id: __t.u64(),
+  matchId: __t.u64(),
+  slot: __t.u8(),
+  carrier: __t.identity(),
+  locked: __t.bool(),
+  createdAt: __t.timestamp(),
+});
+export type AnchorAssignment = __Infer<typeof AnchorAssignment>;
 
 export const AvatarDone = __t.object("AvatarDone", {
   identity: __t.identity(),
@@ -67,6 +87,26 @@ export const GameMatch = __t.object("GameMatch", {
 });
 export type GameMatch = __Infer<typeof GameMatch>;
 
+export const Party = __t.object("Party", {
+  id: __t.u64(),
+  code: __t.string(),
+  leader: __t.identity(),
+  boundMatchId: __t.u64(),
+  state: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type Party = __Infer<typeof Party>;
+
+export const PartyMember = __t.object("PartyMember", {
+  id: __t.u64(),
+  partyId: __t.u64(),
+  member: __t.identity(),
+  username: __t.string(),
+  ready: __t.bool(),
+  joinedAt: __t.timestamp(),
+});
+export type PartyMember = __Infer<typeof PartyMember>;
+
 export const Player = __t.object("Player", {
   identity: __t.identity(),
   name: __t.string(),
@@ -86,6 +126,22 @@ export const Player = __t.object("Player", {
 });
 export type Player = __Infer<typeof Player>;
 
+export const Progression = __t.object("Progression", {
+  username: __t.string(),
+  level: __t.u32(),
+  xp: __t.u32(),
+  trackTier: __t.u8(),
+  updatedAt: __t.timestamp(),
+});
+export type Progression = __Infer<typeof Progression>;
+
+export const ReportRow = __t.object("ReportRow", {
+  username: __t.string(),
+  felt: __t.string(),
+  truth: __t.string(),
+});
+export type ReportRow = __Infer<typeof ReportRow>;
+
 export const Tether = __t.object("Tether", {
   id: __t.u64(),
   matchId: __t.u64(),
@@ -95,6 +151,22 @@ export const Tether = __t.object("Tether", {
 });
 export type Tether = __Infer<typeof Tether>;
 
+export const Unlock = __t.object("Unlock", {
+  id: __t.u64(),
+  username: __t.string(),
+  itemKey: __t.string(),
+  source: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type Unlock = __Infer<typeof Unlock>;
+
+export const Wallet = __t.object("Wallet", {
+  username: __t.string(),
+  residue: __t.u32(),
+  updatedAt: __t.timestamp(),
+});
+export type Wallet = __Infer<typeof Wallet>;
+
 export const WardenAction = __t.object("WardenAction", {
   id: __t.u64(),
   matchId: __t.u64(),
@@ -103,6 +175,13 @@ export const WardenAction = __t.object("WardenAction", {
   createdAt: __t.timestamp(),
 });
 export type WardenAction = __Infer<typeof WardenAction>;
+
+export const WardenPresent = __t.object("WardenPresent", {
+  id: __t.u8(),
+  present: __t.bool(),
+  updatedAt: __t.timestamp(),
+});
+export type WardenPresent = __Infer<typeof WardenPresent>;
 
 export const WardenSeat = __t.object("WardenSeat", {
   matchId: __t.u64(),

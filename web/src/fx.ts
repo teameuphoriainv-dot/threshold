@@ -10,6 +10,27 @@ export type Ghost = { x: number; z: number; life: number; max: number };
 // world_event: fades over ~2.5s, has no STDB row, cannot be walked-to. Reads as
 // "an anchor was there a second ago." Rendered by the Minimap (Gameplay.tsx).
 export type Phantom = { x: number; z: number; life: number; max: number };
+// A MOVING silhouette spawned by a move_shadow world_event: a wispy humanoid that
+// drifts along a short straight path (vx,vz from a hash of its spawn coords, NOT
+// rand) like a teammate's locomotion, then fades over ~3.5s. Reads as "someone
+// just walked through here." Same identity-less rule as Ghost.
+export type Walker = { x: number; z: number; vx: number; vz: number; life: number; max: number };
+// A near-field MIRAGE spawned by a false_verify world_event: a SOLID, idling
+// hooded survivor figure that holds for ~2.2s then fades. Reuses the real player
+// mesh so at a glance it is indistinguishable from a teammate — it carries NO
+// name, NO identity color tied to anyone, NO "forged" tell. Breaks
+// line-of-sight-is-truth at close range for a beat.
+export type Mirage = { x: number; z: number; life: number; max: number };
+// A deniable micro-mutation spawned by a gaslight world_event: a brief local
+// light-snuff / shadow sweep near (x,z). `seed` is derived from the coords so the
+// flicker timing reads differently per epicentre. Subtle enough the player doubts
+// they saw it.
+export type Gaslight = { x: number; z: number; life: number; max: number; seed: number };
+// A subtle topology fold spawned by a reshape world_event: applied ONLY when the
+// point is behind the player (outside their view cone — gated at dispatch). A
+// low-amplitude dressing offset / screen fold behind them so the way back feels
+// wrong, with no visible tell under direct sight.
+export type Reshape = { x: number; z: number; life: number; max: number };
 
 export const fx = {
   // spiky, event-driven layers (decayed each frame in WardenFX.tsx)
@@ -20,6 +41,15 @@ export const fx = {
   // the Minimap reads `phantoms`, GhostSilhouettes reads `ghosts`.
   ghosts: [] as Ghost[],
   phantoms: [] as Phantom[],
+  // The four NEW non-chat deception vectors. Each is a bounded ring-buffer (a
+  // burst of world_events can never grow them without limit) decayed every frame
+  // by tickWalkers/tickMirages/tickGaslights/tickReshapes from the single rAF
+  // owner in WardenFX.tsx, mirroring ghosts/phantoms. All location-only: no row,
+  // no identity, no "forged" flag — indistinguishable from ambient reality.
+  walkers: [] as Walker[],   // move_shadow  — moving silhouettes
+  mirages: [] as Mirage[],   // false_verify — solid hooded survivor mirages
+  gaslights: [] as Gaslight[], // gaslight    — deniable light-snuff micro-mutations
+  reshapes: [] as Reshape[], // reshape      — non-Euclidean folds behind the player
   // slow, alive "dread" — a coherent breathing scalar (0..1) the world reads
   // for ambient vignette / desaturation / hum. Unlike flash/glitch it never
   // strobes; it swells and ebbs. `floor` is the resting dread the table can
@@ -73,6 +103,30 @@ const PHANTOM_RADIUS = 999; // minimap blip is a map cue; gated by the map's own
                             // LOS draw rule instead of a hard radius (see Minimap)
 const DISTORT_RADIUS = 10;  // only the lone player whose screen warps; teammates
                             // across the map see no synchronized global tell
+// Per-kind gates for the four new vectors (contract: 8 / 8 / 14 / 22 m). A player
+// outside the gate perceives nothing, so there is no row-presence tell to
+// cross-reference — same indistinguishability rule as ghost_step/distort.
+const WALKER_RADIUS = 8;    // move_shadow:  a "teammate just passed" must be near
+const MIRAGE_RADIUS = 8;    // false_verify: tight close-range proximity confirm
+const GASLIGHT_RADIUS = 14; // gaslight:     a deniable micro-change in your zone
+const RESHAPE_RADIUS = 22;  // reshape:      the path behind you, further out
+// Half-angle of the player's "direct sight" cone (~±50° forward). reshape is the
+// truth-under-sight vector: if (x,z) falls inside this cone the player IS looking
+// toward it, so we render nothing — only the unseen world warps.
+const RESHAPE_HALF_CONE = (50 * Math.PI) / 180;
+
+// Deterministic 0..2π heading from integer-ish coords (NO Math.random, NO time):
+// a cheap integer hash mixed into a fraction. Same (x,z) always yields the same
+// heading so every move_shadow reads consistently for all clients, yet nearby
+// spawns diverge enough that walkers don't all march in lockstep.
+function hashHeading(x: number, z: number): number {
+  // quantize to ~0.1m so tiny float jitter doesn't change the hash, then mix
+  let h = (Math.round(x * 10) * 73856093) ^ (Math.round(z * 10) * 19349663);
+  h = Math.imul(h ^ (h >>> 13), 0x5bd1e995);
+  h ^= h >>> 15;
+  // map the low bits to a fraction in [0,1) -> [0,2π)
+  return ((h >>> 0) % 100000) / 100000 * Math.PI * 2;
+}
 
 export function dispatchWorldEvent(kind: string, x: number, z: number, self: Self): void {
   const dist = Math.hypot(x - self.x, z - self.z);
@@ -96,6 +150,42 @@ export function dispatchWorldEvent(kind: string, x: number, z: number, self: Sel
       fx.glitch = Math.max(fx.glitch, 0.85 * k + 0.15);
       fx.trauma = Math.min(1, fx.trauma + 0.3 * k + 0.05);
       fx.ambientFloor = Math.min(0.6, fx.ambientFloor + 0.05 * k);
+      break;
+    }
+    case "move_shadow": {
+      // MOVEMENT SHADOW — a moving silhouette that walks a short path like a real
+      // teammate. Only perceived within 8m so it reads as "someone right here".
+      if (dist > WALKER_RADIUS) return;
+      pushWalker(x, z);
+      footstep(x, z, self);                       // a passing teammate makes steps
+      break;
+    }
+    case "false_verify": {
+      // FALSE VERIFICATION — a solid hooded survivor mirage, distance-gated TIGHT
+      // (8m) so close-range proximity "confirms" a teammate who isn't there.
+      if (dist > MIRAGE_RADIUS) return;
+      pushMirage(x, z);
+      break;
+    }
+    case "gaslight": {
+      // ENVIRONMENTAL GASLIGHTING — a deniable micro-mutation (light snuff / shadow
+      // sweep) in the player's zone. Subtle; no trauma/glitch spike that would read
+      // as a deliberate tell.
+      if (dist > GASLIGHT_RADIUS) return;
+      pushGaslight(x, z);
+      break;
+    }
+    case "reshape": {
+      // TOPOLOGY UNSEEN — only warp the world BEHIND the player. If (x,z) is within
+      // their forward sight cone they are looking at it, so truth holds: render
+      // nothing. Outside the gate, nothing either.
+      if (dist > RESHAPE_RADIUS) return;
+      // bearing to the point vs the player's facing; |delta| <= half-cone => in sight
+      const bearing = Math.atan2(x - self.x, z - self.z);   // matches yaw convention
+      let delta = bearing - self.yaw;
+      delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // wrap to [-π,π]
+      if (Math.abs(delta) <= RESHAPE_HALF_CONE) return;     // direct sight = truth
+      pushReshape(x, z);
       break;
     }
     // Unknown kinds are ignored — a future server kind can't crash an old client.
@@ -131,6 +221,81 @@ export function tickPhantoms(dt: number): void {
   let n = 0;
   for (const p of fx.phantoms) if (p.life > 0) fx.phantoms[n++] = p;
   fx.phantoms.length = n;
+}
+
+// --- move_shadow walkers (bounded) -----------------------------------------
+// A walker drifts ~6–10m over its ~3.5s life. Speed is chosen so distance ≈
+// life*speed lands in that band; heading is a deterministic hash of the spawn
+// coords (NOT Math.random, NOT time) so every client renders the same drift.
+const MAX_WALKERS = 5;
+const WALKER_LIFE = 3.5;     // seconds
+const WALKER_SPEED = 2.3;    // m/s -> ~8m of travel over a full life
+export function pushWalker(x: number, z: number): void {
+  const ang = hashHeading(x, z);
+  fx.walkers.push({ x, z, vx: Math.sin(ang) * WALKER_SPEED, vz: Math.cos(ang) * WALKER_SPEED, life: 1, max: WALKER_LIFE });
+  if (fx.walkers.length > MAX_WALKERS) fx.walkers.shift();
+}
+/** Advance + decay walkers; drop dead ones. Call once per frame from one owner. */
+export function tickWalkers(dt: number): void {
+  const d = Math.min(0.05, Math.max(0, dt));
+  for (const w of fx.walkers) {
+    w.x += w.vx * d;
+    w.z += w.vz * d;
+    w.life -= d / w.max;
+  }
+  let n = 0;
+  for (const w of fx.walkers) if (w.life > 0) fx.walkers[n++] = w;
+  fx.walkers.length = n;
+}
+
+// --- false_verify mirages (bounded) ----------------------------------------
+const MAX_MIRAGES = 4;
+const MIRAGE_LIFE = 2.2;     // seconds — a believable beat, then gone
+export function pushMirage(x: number, z: number): void {
+  fx.mirages.push({ x, z, life: 1, max: MIRAGE_LIFE });
+  if (fx.mirages.length > MAX_MIRAGES) fx.mirages.shift();
+}
+/** Decay mirage lifetimes; drop dead ones. Call once per frame from one owner. */
+export function tickMirages(dt: number): void {
+  const d = Math.min(0.05, Math.max(0, dt));
+  for (const m of fx.mirages) m.life -= d / m.max;
+  let n = 0;
+  for (const m of fx.mirages) if (m.life > 0) fx.mirages[n++] = m;
+  fx.mirages.length = n;
+}
+
+// --- gaslight micro-mutations (bounded) ------------------------------------
+const MAX_GASLIGHTS = 5;
+const GASLIGHT_LIFE = 1.1;   // seconds — a brief snuff/sweep, then over
+export function pushGaslight(x: number, z: number): void {
+  // seed the flicker phase from coords (deterministic, no rand/time at push)
+  const seed = hashHeading(x, z);
+  fx.gaslights.push({ x, z, life: 1, max: GASLIGHT_LIFE, seed });
+  if (fx.gaslights.length > MAX_GASLIGHTS) fx.gaslights.shift();
+}
+/** Decay gaslight lifetimes; drop dead ones. Call once per frame from one owner. */
+export function tickGaslights(dt: number): void {
+  const d = Math.min(0.05, Math.max(0, dt));
+  for (const g of fx.gaslights) g.life -= d / g.max;
+  let n = 0;
+  for (const g of fx.gaslights) if (g.life > 0) fx.gaslights[n++] = g;
+  fx.gaslights.length = n;
+}
+
+// --- reshape folds (bounded) -----------------------------------------------
+const MAX_RESHAPES = 4;
+const RESHAPE_LIFE = 2.6;    // seconds — a slow swell behind the player, then ebb
+export function pushReshape(x: number, z: number): void {
+  fx.reshapes.push({ x, z, life: 1, max: RESHAPE_LIFE });
+  if (fx.reshapes.length > MAX_RESHAPES) fx.reshapes.shift();
+}
+/** Decay reshape lifetimes; drop dead ones. Call once per frame from one owner. */
+export function tickReshapes(dt: number): void {
+  const d = Math.min(0.05, Math.max(0, dt));
+  for (const r of fx.reshapes) r.life -= d / r.max;
+  let n = 0;
+  for (const r of fx.reshapes) if (r.life > 0) fx.reshapes[n++] = r;
+  fx.reshapes.length = n;
 }
 
 // ---------------------------------------------------------------------------
