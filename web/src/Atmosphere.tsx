@@ -34,7 +34,6 @@ import { useThree, useFrame } from "@react-three/fiber";
 import { Environment, Lightformer, SoftShadows } from "@react-three/drei";
 import {
   EffectComposer,
-  N8AO,
   Bloom,
   HueSaturation,
   ChromaticAberration,
@@ -135,7 +134,6 @@ function Grade() {
   const aberr = useRef<AnyEffect>(null);
   const vignette = useRef<{ uniforms?: Map<string, { value: number }> } & AnyEffect>(null);
   const hue = useRef<AnyEffect>(null);
-  const ao = useRef<{ configuration?: { intensity: number } } & AnyEffect>(null);
   const baseAberr = useMemo(() => new THREE.Vector2(0.0006, 0.0006), []);
 
   useFrame(() => {
@@ -166,24 +164,10 @@ function Grade() {
       // nudge hue a hair toward cold so even neutral surfaces feel wrong
       hue.current.hue = -0.04 * a;
     }
-    if (ao.current?.configuration) {
-      // crevices crush harder when the dark is hungry
-      ao.current.configuration.intensity = 1.4 + a * 0.8;
-    }
   });
 
   return (
     <EffectComposer multisampling={0} enableNormalPass={false}>
-      {/* AO first so it darkens the raw lit image before bloom reads luminance */}
-      <N8AO
-        halfRes
-        quality="performance"
-        aoRadius={2.2}
-        distanceFalloff={1.0}
-        intensity={1.5}
-        color="black"
-        ref={ao as never}
-      />
       <Bloom
         ref={bloom as never}
         intensity={0.9}
