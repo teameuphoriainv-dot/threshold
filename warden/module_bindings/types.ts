@@ -104,3 +104,20 @@ export const WardenAction = __t.object("WardenAction", {
 });
 export type WardenAction = __Infer<typeof WardenAction>;
 
+export const WardenSeat = __t.object("WardenSeat", {
+  matchId: __t.u64(),
+  wardenIdentity: __t.identity(),
+  lastAction: __t.timestamp(),
+});
+export type WardenSeat = __Infer<typeof WardenSeat>;
+
+export const WorldEvent = __t.object("WorldEvent", {
+  id: __t.u64(),
+  matchId: __t.u64(),
+  kind: __t.string(),
+  x: __t.f32(),
+  z: __t.f32(),
+  createdAt: __t.timestamp(),
+});
+export type WorldEvent = __Infer<typeof WorldEvent>;
+

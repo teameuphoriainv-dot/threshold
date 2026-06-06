@@ -12,5 +12,7 @@ import {
 
 export default {
   matchId: __t.u64(),
-  secret: __t.string(),
+  anchorId: __t.u64(),
+  x: __t.f32(),
+  z: __t.f32(),
 };

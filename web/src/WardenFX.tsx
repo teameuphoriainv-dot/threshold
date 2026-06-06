@@ -4,24 +4,27 @@ import * as THREE from "three";
 import { useTable } from "spacetimedb/react";
 import { tables } from "./spacetime";
 import { type Self } from "./helpers";
-import { fx, dispatchWardenAction, shakeNoise } from "./fx";
+import { fx, dispatchWorldEvent, tickGhosts, tickPhantoms, shakeNoise } from "./fx";
 
-// Subscribe to warden_action; fire FX for NEW rows only (skip the backlog replayed
-// on initial subscription).
-export function useWardenActions(self: Self, matchId: bigint) {
-  const [actions] = useTable(tables.warden_action.where((r) => r.matchId.eq(matchId)));
+// Subscribe to world_event; fire LOCATION-ONLY FX for NEW rows only.
+//
+// A world_event row carries only { kind, x, z } — no victim identity, no "forged"
+// flag. dispatchWorldEvent distance-gates from the LOCAL player's pose, so an
+// unaffected player perceives nothing and there is no row-presence tell to
+// cross-reference (PRD indistinguishability). `self` is the live, mutated pose
+// object (read fresh per row), so gating uses the player's CURRENT position, not
+// a stale render snapshot.
+export function useWorldEvents(self: Self, matchId: bigint) {
+  const [events] = useTable(tables.world_event.where((r) => r.matchId.eq(matchId)));
   const seen = useRef(-1);
   useEffect(() => {
-    if (seen.current < 0) { seen.current = actions.length; return; }
-    for (let i = seen.current; i < actions.length; i++) {
-      const a = actions[i] as unknown as { actionType: string };
-      // MIMIC is a silent forgery (forged chat only). It must NEVER drive screen
-      // FX or it would telegraph the deception to the whole table. Skip it here as
-      // a defensive guard even if a MIMIC row leaks into the public action log.
-      if (a?.actionType && a.actionType !== "MIMIC") dispatchWardenAction(a.actionType, self);
+    if (seen.current < 0) { seen.current = events.length; return; }
+    for (let i = seen.current; i < events.length; i++) {
+      const e = events[i] as unknown as { kind: string; x: number; z: number };
+      if (e?.kind) dispatchWorldEvent(e.kind, e.x, e.z, self);
     }
-    seen.current = actions.length;
-  }, [actions.length, self]);
+    seen.current = events.length;
+  }, [events.length, self]);
 }
 
 // HTML overlays + camera shake + the manifested entity, all reading module-level fx.
@@ -34,6 +37,10 @@ export function WardenEntity({ self }: { self: Self }) {
     fx.flash = Math.max(0, fx.flash - dt * 1.6);
     fx.glitch = Math.max(0, fx.glitch - dt * 1.4);
     fx.trauma = Math.max(0, fx.trauma - dt * 0.8);
+    // world_event-driven layers: age out ghost silhouettes + phantom blips here,
+    // in the single frame owner, so they fade smoothly and never leak across rows.
+    tickGhosts(dt);
+    tickPhantoms(dt);
     const m = fx.manifest;
     // Hard 9s despawn: the entity vanishes the instant its window elapses.
     if (m.active && performance.now() > m.until) { m.active = false; fx.danger = Math.max(0, fx.danger - dt); }
@@ -78,6 +85,56 @@ export function WardenEntity({ self }: { self: Self }) {
       <mesh position={[-0.5, 2.2, 0]} rotation-z={-0.25}><cylinderGeometry args={[0.07, 0.07, 3.2, 5]} /><meshStandardMaterial color={0x05060a} emissive={0x300008} /></mesh>
       <mesh position={[0.5, 2.2, 0]} rotation-z={0.25}><cylinderGeometry args={[0.07, 0.07, 3.2, 5]} /><meshStandardMaterial color={0x05060a} emissive={0x300008} /></mesh>
       <pointLight position-y={3} color={0xff1030} intensity={2.2} distance={12} />
+    </group>
+  );
+}
+
+// Brief world silhouettes for ghost_step world_events. A small fixed pool of
+// humanoid shapes is synced to fx.ghosts each frame: each active ghost stands at
+// its (x,z) and fades out via material opacity as its life decays. Pure location
+// FX — no identity, no colour that maps to any player, so it reads as "something
+// moved past" and cannot be attributed to the Warden. Distance-gating already
+// happened at insert time (dispatchWorldEvent), so any ghost here is one the local
+// player is meant to perceive.
+const GHOST_POOL = 6;
+export function GhostSilhouettes() {
+  const group = useRef<THREE.Group>(null);
+  useFrame(() => {
+    const g = group.current;
+    if (!g) return;
+    const ghosts = fx.ghosts;
+    for (let i = 0; i < g.children.length; i++) {
+      const node = g.children[i] as THREE.Group;
+      const ghost = ghosts[i];
+      if (!ghost) { node.visible = false; continue; }
+      node.visible = true;
+      node.position.set(ghost.x, 0, ghost.z);
+      // ease-out fade: visible quickly, lingers, then vanishes
+      const op = Math.max(0, ghost.life) ** 0.7;
+      node.traverse((c) => {
+        const mesh = c as THREE.Mesh;
+        const mat = mesh.material as THREE.MeshBasicMaterial | undefined;
+        if (mat && "opacity" in mat) mat.opacity = op * 0.55;
+      });
+      // faint vertical drift + slow turn so it doesn't read as a static decal
+      node.rotation.y = (1 - ghost.life) * 1.2;
+      node.position.y = (1 - ghost.life) * 0.25;
+    }
+  });
+  return (
+    <group ref={group}>
+      {Array.from({ length: GHOST_POOL }, (_, i) => (
+        <group key={i} visible={false}>
+          <mesh position-y={1.6}>
+            <capsuleGeometry args={[0.32, 1.5, 4, 8]} />
+            <meshBasicMaterial color={0x10131a} transparent opacity={0} depthWrite={false} toneMapped={false} />
+          </mesh>
+          <mesh position-y={2.75}>
+            <sphereGeometry args={[0.28, 8, 8]} />
+            <meshBasicMaterial color={0x0a0c12} transparent opacity={0} depthWrite={false} toneMapped={false} />
+          </mesh>
+        </group>
+      ))}
     </group>
   );
 }

@@ -12,4 +12,5 @@ import {
 
 export default {
   matchId: __t.u64(),
+  secret: __t.string(),
 };

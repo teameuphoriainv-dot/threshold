@@ -3,6 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { type Self, idHex, colorHex, prompt, CONVERGENCE, PICKUP_DIST, PLACE_DIST } from "./helpers";
 import { WALLS, canSee } from "./world";
+import { fx as fxState } from "./fx";
 import type { Anchor, Tether, Player } from "./spacetime";
 
 // honour the user's OS reduced-motion preference (also handled in index.css for CSS).
@@ -519,6 +520,22 @@ export function Minimap({ anchors, tethers, players, myId, self }: {
         ctx.fillStyle = "#e0303f"; ctx.strokeStyle = "#ff9aa6"; ctx.lineWidth = 1.4;
         ctx.beginPath(); ctx.moveTo(ax, ay - 4.5); ctx.lineTo(ax + 4.5, ay); ctx.lineTo(ax, ay + 4.5); ctx.lineTo(ax - 4.5, ay); ctx.closePath();
         ctx.fill(); ctx.stroke();
+      }
+      // phantom anchors — EPHEMERAL fake diamonds from phantom_anchor world_events.
+      // Drawn with the SAME diamond shape and colours as a real anchor (above) so a
+      // fresh phantom is visually indistinguishable from a real objective — it just
+      // FADES over ~2.5s (alpha tracks `life`). No STDB row backs it, so it cannot
+      // be walked-to or verified; it reads as "an anchor was there a second ago".
+      // LOS-gated like real anchors so its presence/absence carries no extra tell.
+      for (const ph of fxState.phantoms) {
+        if (!canSee(self.x, self.z, self.yaw, ph.x, ph.z)) continue;
+        const [px, py] = w2m(ph.x, ph.z);
+        const a = Math.max(0, Math.min(1, ph.life));
+        ctx.globalAlpha = a;
+        ctx.fillStyle = "#e0303f"; ctx.strokeStyle = "#ff9aa6"; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(px, py - 4.5); ctx.lineTo(px + 4.5, py); ctx.lineTo(px, py + 4.5); ctx.lineTo(px - 4.5, py); ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        ctx.globalAlpha = 1;
       }
       // tethers — RING + inner cross (distinct shape; rescue points)
       for (const t of live.current.tethers) {

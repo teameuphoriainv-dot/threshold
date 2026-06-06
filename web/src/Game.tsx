@@ -13,7 +13,7 @@ import { collide, canSee, PLAYER_R } from "./world";
 import { Kit } from "./Kit";
 import { type Self, idHex } from "./helpers";
 import { Anchors, Tethers, InteractionLayer, PromptOverlay, Minimap, useUiSounds, GameAudio, AudioToggle } from "./Gameplay";
-import { useWardenActions, WardenEntity, FXOverlays } from "./WardenFX";
+import { useWorldEvents, WardenEntity, GhostSilhouettes, FXOverlays } from "./WardenFX";
 import { Vines } from "./Vines";
 import { Portals } from "./Portals";
 import { Ground } from "./Ground";
@@ -235,6 +235,7 @@ function Scene({ self, players, myId, onMove, anchors, tethers, pickup, place, r
       <Tethers tethers={tethers} />
       <Portals self={self} />
       <WardenEntity self={self} />
+      <GhostSilhouettes />
       <InteractionLayer anchors={anchors} tethers={tethers} players={players} myId={myId} self={self}
         pickup={pickup} place={place} rescue={rescue} />
     </>
@@ -376,7 +377,7 @@ export function Game() {
   const [anchors] = useTable(tables.anchor.where((r) => r.matchId.eq(mid)));
   const [chat] = useTable(tables.chat_message.where((r) => r.matchId.eq(mid)));
   const [tethers] = useTable(tables.tether.where((r) => r.matchId.eq(mid)));
-  useWardenActions(selfRef.current, mid);
+  useWorldEvents(selfRef.current, mid);
 
   const createMatch = useReducer(reducers.createMatch);
   const joinMatch = useReducer(reducers.joinMatch);

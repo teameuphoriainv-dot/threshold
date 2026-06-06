@@ -10,10 +10,8 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default __t.row({
-  id: __t.u64().primaryKey(),
-  matchId: __t.u64().name("match_id"),
-  actionType: __t.string().name("action_type"),
-  target: __t.string(),
-  createdAt: __t.timestamp().name("created_at"),
-});
+export default {
+  matchId: __t.u64(),
+  x: __t.f32(),
+  z: __t.f32(),
+};

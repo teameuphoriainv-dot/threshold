@@ -1,58 +1,111 @@
-// Modular kit dressing for the whole world. ONE shared instancer tiles downloaded
-// CC0 modules (KayKit Dungeon / Quaternius) across the level:
-//   • walls   — tiled along every WALLS footprint (box fallback until added)
-//   • floor   — grid of tiles over the arena
-//   • pillars — at room corners, floor→ceiling
-//   • props   — debris/roots scattered deterministically (seeded, lint-pure)
-// Each asset is independently gated by KIT below: drop the .glb, flip its flag.
-// Missing/broken GLB falls back safely (walls→boxes, others→nothing) so the
-// game never blanks out.
+// WHISPERS world dressing — a DEAD-FOREST CLIFF-BASIN + a corrupted GOTHIC CHAMBER.
+// Replaces the old procedural box-room. The whole scene is composed from CC0 Poly
+// Haven GLBs in /public/models/ and assembled DETERMINISTICALLY (seeded mulberry32)
+// so the layout is identical every render.
 //
-// PIPELINE for any piece:
-//   npx @gltf-transform/cli optimize raw.glb web/public/models/<name>.glb \
-//     --compress draco --texture-compress webp --simplify
-import { Component, Suspense, useMemo, type ReactNode } from "react";
+// COMPOSITION (art-direction spec):
+//   1. CLIFF RING  — 8 giant cliff1 faces + jagged cliff2/mossrock/wall infill ring a
+//      circular play basin (RING_R≈44). Replaces the box walls; players can't leave.
+//      Dissolves into Atmosphere's exp2 fog past ~r38 so it reads as an endless wall.
+//   2. DEAD FOREST — InstancedMesh dead trees with a DENSITY FALLOFF: a forest WALL at
+//      the edges (r30-38) thinning to a near-bare center (sightlines for mimicry).
+//      Plus 6 sparse tree_bare1 HERO monoliths as direct-clone skyline landmarks.
+//   3. GROUND CLUTTER — seeded scatter of roots/stumps/logs/rocks/pebbles (InstancedMesh).
+//   4. GOTHIC CHAMBER — the dark-mirror living room decayed into the basin: 6 direct
+//      goth furniture clones, tilted + half-sunk, framing the convergence ring at (0,4).
+//   5. DYING LANTERNS — lamp1 + chandelier1 direct clones, EACH carrying a flickering
+//      sickly-amber point light (the only warmth in a cold blue-black palette).
+//
+// CLEAR RINGS preserved (no obstruction): convergence (0,4) r=6, spawn (0,26) r=5,
+// and r=3 around every PORTAL_END. All tints stay cold per the locked palette.
+//
+// Reuses the existing instancing core: moduleInfo / buildInstances / tintMaterial /
+// rng (seeded mulberry32 — lint-pure, NO non-seeded Math.random in render) /
+// KitBoundary + box fallback. Keeps the exported function Kit().
+import { Component, Suspense, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { useGLTF } from "@react-three/drei";
-import { WALLS, collide } from "./world";
+import { useFrame } from "@react-three/fiber";
+import { collide } from "./world";
 
-// ---- which kit pieces are present (flip after dropping the matching .glb) ----
-// LIVE: dark Poly Haven CC0 set — rock-face cave walls, dead-tree monoliths,
-// roots/stumps/logs/rocks scattered. Floor stays the PBR alien terrain.
-const KIT = { walls: true, floor: false, pillars: true, props: true };
+// ---- master switch (drop a .glb, flip its flag) ----
+const KIT = { cliffs: true, forest: true, clutter: true, gothic: true, lanterns: true };
+
 const MODELS = {
-  wall: "/models/wall.glb",      // rock_face_02 (cave wall)
-  floor: "/models/floor.glb",
-  pillar: "/models/pillar.glb",  // dead_quiver_trunk (standing dead tree → portal monolith)
-};
-// scattered organic props — distributed across all of these (Upside-Down dressing)
-const PROP_MODELS = [
-  "/models/prop_root.glb",    // single_root
-  "/models/prop_roots2.glb",  // root_cluster_02
-  "/models/prop_stump.glb",   // tree_stump_01
-  "/models/prop_log.glb",     // dead_tree_trunk_02
-  "/models/prop_rock.glb",    // rock_07
+  // cliffs / rocks
+  cliff1: "/models/cliff1.glb",
+  cliff2: "/models/cliff2.glb",
+  wall: "/models/wall.glb",
+  mossrock1: "/models/mossrock1.glb",
+  moonrock1: "/models/moonrock1.glb",
+  moonrock2: "/models/moonrock2.glb",
+  prop_rock: "/models/prop_rock.glb",
+  // dead trees
+  tree_quiver1: "/models/tree_quiver1.glb",
+  tree_dead1: "/models/tree_dead1.glb",
+  pillar: "/models/pillar.glb",
+  branches1: "/models/branches1.glb",
+  tree_bare1: "/models/tree_bare1.glb",
+  // ground clutter
+  prop_roots2: "/models/prop_roots2.glb",
+  prop_root: "/models/prop_root.glb",
+  prop_stump: "/models/prop_stump.glb",
+  stump2: "/models/stump2.glb",
+  prop_log: "/models/prop_log.glb",
+  // gothic chamber
+  goth_cabinet: "/models/goth_cabinet.glb",
+  goth_commode: "/models/goth_commode.glb",
+  goth_table: "/models/goth_table.glb",
+  goth_chair: "/models/goth_chair.glb",
+  // dying lights
+  lamp1: "/models/lamp1.glb",
+  chandelier1: "/models/chandelier1.glb",
+} as const;
+
+// ---- basin / layout constants ----
+const RING_R = 44;          // cliff segment center distance from origin (m)
+const WALL_H = 11;          // target cliff wall height (m)
+const BASIN_R = 39;         // inner edge of the cliff ring (trees stop here)
+const TREE_EDGE = 38;       // radius where the forest wall is densest
+const TREE_INNER = 6;       // density ~0 inside this radius
+
+const TINT = new THREE.Color(0x1c2a3a);      // cold blue-black
+const EMISSIVE = new THREE.Color(0x03070c);  // cold blue-black glow
+const LAMP_COLOR = new THREE.Color(0x6fae9e); // sick cold teal (PRD §3: NO warm env colors)
+
+// clear rings: { x, z, r } — no dressing inside these.
+const CLEAR_RINGS: { x: number; z: number; r: number }[] = [
+  { x: 0, z: 4, r: 6 },     // convergence
+  { x: 0, z: 26, r: 5 },    // spawn
 ];
-const PROP_BASE = 1.7;  // target base size (m) per prop before per-instance variation
-const WALL_MODULE = 4;   // native width (m) of one wall piece (KayKit ≈ 4)
-const FLOOR_TILE = 4;    // native footprint (m) of one floor tile
-const WALL_H = 9;        // game wall / pillar height
-const TINT = new THREE.Color(0x1c2a3a);     // cold blue-black (was warm crimson 0x6b2a30)
-const EMISSIVE = new THREE.Color(0x03070c);  // cold blue-black glow (was 0x0c0306)
+// portal ends (mirror Portals.tsx / old Kit) — keep r=3 clear around each doorway.
+const PORTAL_ENDS: { x: number; z: number }[] = [
+  { x: 6, z: -30 }, { x: 13, z: 18 }, { x: -34, z: 11 }, { x: 34, z: -2 },
+];
+const PORTAL_CLEAR_R = 3;
+
+function inClearRing(x: number, z: number): boolean {
+  for (const c of CLEAR_RINGS) if (Math.hypot(x - c.x, z - c.z) < c.r) return true;
+  for (const p of PORTAL_ENDS) if (Math.hypot(x - p.x, z - p.z) < PORTAL_CLEAR_R) return true;
+  return false;
+}
 
 // ============================================================
-//  shared instancing core
+//  shared instancing core (reused from the old Kit)
 // ============================================================
 type ModuleInfo = { size: THREE.Vector3; recenter: THREE.Matrix4; meshes: THREE.Mesh[] };
 
-// measure a loaded module: bbox size + a matrix that centres it in XZ and rests
-// its lowest point on y=0, plus its sub-meshes.
-function moduleInfo(scene: THREE.Object3D): ModuleInfo {
+// measure a loaded module: bbox size + a matrix that centres it in XZ and rests its
+// lowest point on y=0. `floorY=false` (for the chandelier, whose origin is at the TOP
+// and which HANGS DOWN) keeps the native origin so it can be hung from a height.
+function moduleInfo(scene: THREE.Object3D, floorY = true): ModuleInfo {
   scene.updateWorldMatrix(true, true);
   const box = new THREE.Box3().setFromObject(scene);
   const size = new THREE.Vector3(); box.getSize(size);
   const c = new THREE.Vector3(); box.getCenter(c);
-  const recenter = new THREE.Matrix4().makeTranslation(-c.x, -box.min.y, -c.z);
+  const recenter = floorY
+    ? new THREE.Matrix4().makeTranslation(-c.x, -box.min.y, -c.z)
+    : new THREE.Matrix4().makeTranslation(-c.x, 0, -c.z);
   const meshes: THREE.Mesh[] = [];
   scene.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
   return { size, recenter, meshes };
@@ -63,12 +116,13 @@ function tintMaterial(mat: THREE.Material | THREE.Material[], amount: number): T
   const m = src.clone() as THREE.MeshStandardMaterial;
   if (m.color) m.color.lerp(TINT, amount);
   if (m.emissive) m.emissive = EMISSIVE.clone();
-  m.side = THREE.DoubleSide; // rock faces / fronds are single-sided — avoid see-through walls
+  m.side = THREE.DoubleSide; // rock faces / fronds are single-sided — avoid see-through
   return m;
 }
 
 // one InstancedMesh per sub-mesh, placed at every world matrix.
 function buildInstances(info: ModuleInfo, matrices: THREE.Matrix4[], tintAmount: number): THREE.InstancedMesh[] {
+  if (matrices.length === 0) return [];
   const tmp = new THREE.Matrix4();
   return info.meshes.map((mesh) => {
     const inst = new THREE.InstancedMesh(mesh.geometry, tintMaterial(mesh.material, tintAmount), matrices.length);
@@ -78,6 +132,17 @@ function buildInstances(info: ModuleInfo, matrices: THREE.Matrix4[], tintAmount:
     inst.instanceMatrix.needsUpdate = true;
     return inst;
   });
+}
+
+// a direct (non-instanced) clone of a module, recentered + tinted, ready to <primitive/>.
+function cloneTinted(info: ModuleInfo, scene: THREE.Object3D, tintAmount: number): THREE.Object3D {
+  const root = (scene as THREE.Object3D).clone(true);
+  root.applyMatrix4(info.recenter);
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh) { mesh.material = tintMaterial(mesh.material, tintAmount); mesh.castShadow = mesh.receiveShadow = false; }
+  });
+  return root;
 }
 
 const Rendered = ({ list }: { list: THREE.InstancedMesh[] }) => (
@@ -95,242 +160,387 @@ function rng(seed: number) {
   };
 }
 
+// helper: normalize a varied native module to a target max-dimension.
+const normTo = (info: ModuleInfo, target: number) =>
+  target / Math.max(info.size.x, info.size.y, info.size.z, 0.001);
+
+// density falloff edge→center: ~0 at center, ~1 at the tree-wall edge.
+function density(r: number): number {
+  const t = THREE.MathUtils.clamp((r - TREE_INNER) / (TREE_EDGE - TREE_INNER), 0, 1);
+  return Math.pow(t, 1.6);
+}
+
 // ============================================================
-//  walls — tiled along WALLS footprints
+//  1. CLIFF RING — replaces the box walls (players can't leave)
 // ============================================================
-function wallMatrices(size: THREE.Vector3): THREE.Matrix4[] {
-  const out: THREE.Matrix4[] = [];
-  for (const w of WALLS) {
-    const horizontal = w.w >= w.d;
-    const total = Math.max(w.w, w.d);
-    const thick = Math.min(w.w, w.d);
-    const count = Math.max(1, Math.round(total / WALL_MODULE));
-    const seglen = total / count;
-    for (let k = 0; k < count; k++) {
-      const off = -total / 2 + seglen * (k + 0.5);
-      const x = horizontal ? w.x + off : w.x;
-      const z = horizontal ? w.z : w.z + off;
-      const angle = horizontal ? 0 : Math.PI / 2;
-      const S = new THREE.Matrix4().makeScale(
-        seglen / (size.x || 1), WALL_H / (size.y || 1), thick / (size.z || 1)
-      );
-      const T = new THREE.Matrix4().makeTranslation(x, 0, z).multiply(new THREE.Matrix4().makeRotationY(angle));
-      out.push(T.multiply(S));
+// 8 giant cliff1 faces facing inward, seeded jitter so the rim is uneven, plus
+// instanced cliff2 / mossrock / wall infill to hide the seams. cliff1 pieces are
+// direct clones (too big to gain from instancing, each needs a unique inward yaw).
+function CliffRing() {
+  const cliff1 = useGLTF(MODELS.cliff1);
+  const infill = useGLTF([MODELS.cliff2, MODELS.mossrock1, MODELS.wall]);
+  const [cliff2G, mossG, wallG] = infill;
+
+  const cliffClones = useMemo(() => {
+    const info = moduleInfo(cliff1.scene);
+    const r = rng(7777);
+    const out: THREE.Object3D[] = [];
+    const sXZ = 34.5 / (info.size.x || 1);   // span ~34.5m arc with native ~92m width
+    const sY = WALL_H / (info.size.y || 1);
+    for (let i = 0; i < 8; i++) {
+      const a = i * (Math.PI * 2 / 8);
+      const rad = RING_R + (r() - 0.5) * 5;            // ±2.5m radius jitter
+      const yaw = a + Math.PI + (r() - 0.5) * 0.24;    // flat face points INWARD (±0.12 rad)
+      const sink = -1.5 * r();                         // sink between -1.5 and 0 → uneven rim
+      const jXZ = sXZ * (1 + (r() - 0.5) * 0.12);      // ±0.06 scale jitter
+      const node = cloneTinted(info, cliff1.scene, 0.55);
+      node.position.set(Math.sin(a) * rad, sink, Math.cos(a) * rad);
+      node.rotation.y = yaw;
+      node.scale.set(jXZ, sY, jXZ);
+      out.push(node);
     }
-  }
-  return out;
-}
+    return out;
+  }, [cliff1.scene]);
 
-function WallKit() {
-  const { scene } = useGLTF(MODELS.wall);
-  const list = useMemo(() => {
-    const info = moduleInfo(scene);
-    return buildInstances(info, wallMatrices(info.size), 0.55);
-  }, [scene]);
-  return <Rendered list={list} />;
-}
+  const infillLists = useMemo(() => {
+    const r = rng(7778);
+    const cliff2Info = moduleInfo(cliff2G.scene);
+    const mossInfo = moduleInfo(mossG.scene);
+    const wallInfo = moduleInfo(wallG.scene);
+    const normMoss = normTo(mossInfo, 8.0);   // mossrock native ~8m → keep ~native
+    const normWall = normTo(wallInfo, 2.7);
 
-export function BoxWalls() {
+    const ringMat = (rad0: number, rad1: number, sMin: number, sMax: number, sinkMin: number, sinkMax: number, baseNorm: number, count: number) => {
+      const out: THREE.Matrix4[] = [];
+      for (let i = 0; i < count; i++) {
+        const a = r() * Math.PI * 2;
+        const rad = rad0 + r() * (rad1 - rad0);
+        const x = Math.sin(a) * rad, z = Math.cos(a) * rad;
+        const s = baseNorm * (sMin + r() * (sMax - sMin));
+        const sink = sinkMin + r() * (sinkMax - sinkMin);
+        out.push(
+          new THREE.Matrix4()
+            .makeTranslation(x, sink, z)
+            .multiply(new THREE.Matrix4().makeRotationY(r() * Math.PI * 2))
+            .multiply(new THREE.Matrix4().makeScale(s, s, s))
+        );
+      }
+      return out;
+    };
+
+    // cliff2: native ~8.3m, scale 1.3-2.2 directly on geometry (no normalize)
+    const cliff2Mats = ringMat(40, 46, 1.3, 2.2, -0.5, 0, 1, 14);
+    const mossMats = ringMat(40, 46, 0.8, 1.4, -2.0, -0.5, normMoss, 10);
+    const wallMats = ringMat(38, 45, 1.5, 3.0, -1.5, 0, normWall, 20);
+
+    return [
+      ...buildInstances(cliff2Info, cliff2Mats, 0.55),
+      ...buildInstances(mossInfo, mossMats, 0.55),
+      ...buildInstances(wallInfo, wallMats, 0.55),
+    ];
+  }, [cliff2G.scene, mossG.scene, wallG.scene]);
+
   return (
     <>
-      {WALLS.map((w, i) => (
-        <mesh key={i} position={[w.x, 4.5, w.z]}>
-          <boxGeometry args={[w.w, 9, w.d]} />
-          <meshStandardMaterial color={0x1c222b} roughness={0.9} metalness={0.1} emissive={0x03070c} />
-        </mesh>
-      ))}
+      {cliffClones.map((o, i) => <primitive key={i} object={o} />)}
+      <Rendered list={infillLists} />
     </>
   );
 }
 
 // ============================================================
-//  floor — grid of tiles over the arena
+//  2. DEAD FOREST — InstancedMesh, density falloff edge→center
 // ============================================================
-function floorMatrices(size: THREE.Vector3): THREE.Matrix4[] {
-  const out: THREE.Matrix4[] = [];
-  const sx = FLOOR_TILE / (size.x || 1), sz = FLOOR_TILE / (size.z || 1);
-  for (let x = -40; x <= 40; x += FLOOR_TILE) {
-    for (let z = -35; z <= 35; z += FLOOR_TILE) {
-      out.push(new THREE.Matrix4().makeTranslation(x, 0.02, z).multiply(new THREE.Matrix4().makeScale(sx, 1, sz)));
-    }
-  }
-  return out;
-}
+type TreePick = { x: number; z: number; rotY: number; scale: number; sink: number; tiltZ: number; model: number };
 
-function FloorKit() {
-  const { scene } = useGLTF(MODELS.floor);
-  const list = useMemo(() => {
-    const info = moduleInfo(scene);
-    return buildInstances(info, floorMatrices(info.size), 0.5);
-  }, [scene]);
-  return <Rendered list={list} />;
-}
-
-// ============================================================
-//  pillars — room corners + PORTAL-END MONOLITHS, scaled floor→ceiling
-// ============================================================
-const PILLAR_SPOTS: [number, number][] = [
-  [-16, -11], [16, -11], [-16, 9], [16, 9],          // central hub
-  [-22, -15], [22, -15], [-22, -33], [22, -33],      // north room
-  [-38, -5], [-38, 13], [38, -5], [38, 13],          // west / east rooms
-];
-
-// Portal-end MONOLITHS: towering dead-tree trunks that frame every portal so the
-// non-Euclidean doorways read as landmark gates from across the level. Each portal
-// end gets a TRIAD — two flanking trunks straddling the doorway (offset along the
-// door's tangent, perpendicular to facing yaw) plus one taller KEYSTONE trunk set
-// just behind the veil and leaning forward over it — so the gate reads as a gnarled
-// organic archway, not a pair of posts. Positions + yaw mirror Portals.tsx PAIRS,
-// and `door` mirrors each end's `size` there so the frame scales with the door
-// (small west door → tight short gate, large east door → wide tall gate). Keep in
-// sync if portals move.
-//   { x, z, yaw, tall, door } — yaw = portal facing; tall = global up-scale; door =
-//   portal `size` (drives flank gap + frame height so the gate hugs the veil).
-const PORTAL_ENDS: { x: number; z: number; yaw: number; tall: number; door: number }[] = [
-  { x: 6, z: -30, yaw: 0, tall: 1.35, door: 1.0 },             // pair-1 a (deep north)
-  { x: 13, z: 18, yaw: -Math.PI / 2, tall: 1.15, door: 1.0 },  // pair-1 b (near spawn, east)
-  { x: -34, z: 11, yaw: Math.PI / 2, tall: 1.0, door: 0.7 },   // pair-2 a (small west door)
-  { x: 34, z: -2, yaw: -Math.PI / 2, tall: 1.55, door: 1.3 },  // pair-2 b (large east door)
-];
-const MONOLITH_FLANK = 2.3;   // base half-gap (m) between flanking trunks (× door size)
-const KEYSTONE_BACK = 1.4;    // how far (m) the keystone trunk sits behind the veil
-
-// build the triad transforms for one portal end: two flanking trunks offset along
-// the doorway's tangent (each leaning + splayed outward for an organic gateway) and
-// one taller keystone trunk planted behind the veil, leaning forward to crown it.
-// The veil plane in Portals.tsx is ~3.2·size tall, so the frame scales by p.door.
-function monolithMatrices(size: THREE.Vector3): THREE.Matrix4[] {
-  const out: THREE.Matrix4[] = [];
-  for (const p of PORTAL_ENDS) {
-    const baseK = (WALL_H / (size.y || 1)) * p.tall;
-    // tangent = rotate facing by 90° in XZ → straddle direction
-    const tx = Math.cos(p.yaw), tz = -Math.sin(p.yaw);
-    // forward = portal facing → keystone offset direction (sin yaw, cos yaw)
-    const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw);
-    const flank = MONOLITH_FLANK * (0.7 + p.door * 0.3);   // wider gap for larger doors
-    for (const sgn of [-1, 1] as const) {
-      const x = p.x + tx * flank * sgn;
-      const z = p.z + tz * flank * sgn;
-      const k = baseK * (0.85 + p.door * 0.15);            // taller frame for larger doors
-      const lean = 0.06 * sgn;                             // subtle outward lean (radians)
-      const spin = p.yaw + sgn * 0.5;                      // splay trunks apart, organic feel
-      out.push(
-        new THREE.Matrix4()
-          .makeTranslation(x, 0, z)
-          .multiply(new THREE.Matrix4().makeRotationY(spin))
-          .multiply(new THREE.Matrix4().makeRotationZ(lean))
-          .multiply(new THREE.Matrix4().makeScale(k, k, k))
-      );
-    }
-    // keystone: behind the veil (along -forward), tallest, leaning forward to crown
-    const kx = p.x - fx * KEYSTONE_BACK;
-    const kz = p.z - fz * KEYSTONE_BACK;
-    const kk = baseK * (1.15 + p.door * 0.15);
-    out.push(
-      new THREE.Matrix4()
-        .makeTranslation(kx, 0, kz)
-        .multiply(new THREE.Matrix4().makeRotationY(p.yaw + Math.PI))   // face back over the door
-        .multiply(new THREE.Matrix4().makeRotationZ(-0.1))              // lean forward over veil
-        .multiply(new THREE.Matrix4().makeScale(kk, kk, kk))
-    );
-  }
-  return out;
-}
-
-function pillarMatrices(size: THREE.Vector3): THREE.Matrix4[] {
-  const k = WALL_H / (size.y || 1);
-  const S = new THREE.Matrix4().makeScale(k, k, k);
-  const corners = PILLAR_SPOTS.map(([x, z]) => new THREE.Matrix4().makeTranslation(x, 0, z).multiply(S));
-  return corners.concat(monolithMatrices(size));   // room corners + portal gates
-}
-
-function PillarKit() {
-  const { scene } = useGLTF(MODELS.pillar);
-  const list = useMemo(() => {
-    const info = moduleInfo(scene);
-    return buildInstances(info, pillarMatrices(info.size), 0.45);
-  }, [scene]);
-  return <Rendered list={list} />;
-}
-
-// ============================================================
-//  props — ZONED scatter (deterministic, wall-avoiding, density by region)
-// ============================================================
-// The Upside-Down isn't uniform: the deep-north dead-end and the satellite rooms
-// are choked with roots/stumps; the spawn->convergence corridor and the central
-// hub stay sparse and readable so players can navigate and read sightlines. Each
-// candidate point samples a per-zone DENSITY (keep-probability) and SCALE bias, so
-// dressing thickens toward the dangerous fringes and thins along the path. This
-// shapes mood + funnels attention without touching collision or LOS.
-//
-// PORTAL WARDS override everything: a tight thicket of gnarled roots rings each
-// non-Euclidean doorway (just outside the veil's clear radius) so the gates are
-// landmarked from across the level and feel grown-over, sinister. The clear ring
-// is preserved by propPlacements so the veil stays readable and walkable.
-type Zone = { keep: number; scale: number };          // keep = accept-probability, scale = size bias
-const PORTAL_WARD_R = 5.5;                             // radius (m) of the root thicket around a door
-function zoneAt(x: number, z: number): Zone {
-  // portal wards: dense gnarled thicket hugging every doorway (overrides base zones)
-  for (const p of PORTAL_ENDS) {
-    if (Math.hypot(x - p.x, z - p.z) < PORTAL_WARD_R) return { keep: 0.95, scale: 1.4 };
-  }
-  // deep north (beyond the satellite room, the far dead-end): densest, gnarliest
-  if (z < -26) return { keep: 0.92, scale: 1.35 };
-  // satellite rooms (far west / far east): dense thicket
-  if (Math.abs(x) > 24) return { keep: 0.85, scale: 1.2 };
-  // spawn approach + convergence corridor (the x≈0 path the player walks): sparse
-  if (Math.abs(x) < 8 && z > -6) return { keep: 0.18, scale: 0.85 };
-  // central hub interior: light, keep sightlines open for mimicry
-  if (Math.abs(x) < 16 && Math.abs(z) < 12) return { keep: 0.35, scale: 0.95 };
-  // mid-field default
-  return { keep: 0.6, scale: 1.0 };
-}
-
-// deterministic scatter; each point is assigned one of the prop models. Oversamples
-// candidates and accepts per-zone so dense regions fill while sparse ones thin out.
-const PORTAL_CLEAR_R = 2.4;                              // inner clear radius so the veil stays walkable/readable
-type Placement = { x: number; z: number; rotY: number; scale: number; model: number };
-function propPlacements(modelCount: number): Placement[] {
-  const r = rng(1337);
-  const out: Placement[] = [];
-  for (let i = 0; i < 320 && out.length < 132; i++) {
-    const x = (r() - 0.5) * 76;
-    const z = (r() - 0.5) * 66;
-    const [cx, cz] = collide(x, z, 1.2);                 // pushed = inside/against a wall → skip
+// seeded scatter; weighted model pick; density gate rising toward the edge.
+function forestPlacements(): TreePick[] {
+  const r = rng(2025);
+  const out: TreePick[] = [];
+  for (let i = 0; i < 900 && out.length < 360; i++) {
+    const x = (r() - 0.5) * 84;
+    const z = (r() - 0.5) * 78;
+    const rad = Math.hypot(x, z);
+    if (rad > BASIN_R || rad < 8) continue;                 // inside cliff ring only
+    const [cx, cz] = collide(x, z, 1.0);                    // don't grow trees inside wall baffles
     if (Math.hypot(cx - x, cz - z) > 0.01) continue;
-    if (Math.hypot(x, z - 4) < 6) continue;              // keep convergence ring clear
-    // keep the doorway plane itself clear (the ward thicket fills just outside this)
-    if (PORTAL_ENDS.some((p) => Math.hypot(x - p.x, z - p.z) < PORTAL_CLEAR_R)) continue;
-    const zone = zoneAt(x, z);
-    if (r() > zone.keep) continue;                       // per-zone density gate
-    const scale = (0.7 + r() * 0.8) * zone.scale;        // base variation × zone size bias
-    out.push({ x, z, rotY: r() * Math.PI * 2, scale, model: Math.floor(r() * modelCount) });
+    if (inClearRing(x, z)) continue;                        // clear rings stay open
+    if (r() > density(rad) * 0.85) continue;                // density gate
+
+    // weighted model pick: quiver 55 / dead 18 / pillar 17 / branches 10
+    const w = r();
+    let model: number;
+    if (w < 0.55) model = 0;        // tree_quiver1
+    else if (w < 0.73) model = 1;   // tree_dead1
+    else if (w < 0.90) model = 2;   // pillar
+    else model = 3;                 // branches1
+
+    const rotY = r() * Math.PI * 2;
+    const sink = -0.1 - r() * 0.3;   // -0.1..-0.4 (rooted look)
+    // taller toward the edge
+    const edgeT = THREE.MathUtils.clamp((rad - 14) / (TREE_EDGE - 14), 0, 1);
+    let scale: number, tiltZ = 0;
+    if (model === 0) scale = 1.6 + r() * 1.4;                       // height ~4.5-8m
+    else if (model === 1) { scale = 1.2 + r() * 1.0; tiltZ = 0.2 + r() * 1.2; } // fallen/leaning trunk
+    else if (model === 2) scale = (3.0 + edgeT * 2.0) + (r() - 0.5) * 0.8;      // height ~6-10m, taller at edge
+    else { scale = 1.0 + r() * 1.0; }                              // branches debris, low
+    out.push({ x, z, rotY, scale, sink, tiltZ, model });
   }
   return out;
 }
 
-function PropKit() {
-  const gltfs = useGLTF(PROP_MODELS);                    // drei array form → one hook call
+function DeadForest() {
+  const gltfs = useGLTF([MODELS.tree_quiver1, MODELS.tree_dead1, MODELS.pillar, MODELS.branches1]);
   const scenes = gltfs.map((g) => g.scene);
-  const placements = useMemo(() => propPlacements(scenes.length), [scenes.length]);
+  const placements = useMemo(() => forestPlacements(), []);
   const lists = useMemo(
     () => scenes.map((scene, mi) => {
       const info = moduleInfo(scene);
-      const norm = PROP_BASE / Math.max(info.size.x, info.size.y, info.size.z, 0.001); // normalize varied native sizes
+      // per-model native-height normalization so scale multipliers mean "metres-ish".
+      const baseNorm =
+        mi === 0 ? 1 / (info.size.y || 1) * 1.0 :   // tree_quiver1: scale is metres of height factor
+        mi === 1 ? 1 / Math.max(info.size.x, info.size.z, 0.001) : // tree_dead1: by length
+        mi === 2 ? 1 / (info.size.y || 1) :          // pillar: scale = target height in m
+        normTo(info, 1.2);                           // branches1: ~1.2m base
+      const mats = placements
+        .filter((p) => p.model === mi)
+        .map((p) => {
+          const s = baseNorm * p.scale;
+          const M = new THREE.Matrix4()
+            .makeTranslation(p.x, p.sink, p.z)
+            .multiply(new THREE.Matrix4().makeRotationY(p.rotY));
+          if (p.tiltZ) M.multiply(new THREE.Matrix4().makeRotationZ(p.tiltZ));
+          return M.multiply(new THREE.Matrix4().makeScale(s, s, s));
+        });
+      return buildInstances(info, mats, 0.5);
+    }),
+    [scenes, placements]
+  );
+  return <Rendered list={lists.flat()} />;
+}
+
+// tree_bare1 HERO monoliths — 772k verts, EXTREMELY sparse: exactly 6 direct clones,
+// placed as silhouette landmarks on the forest edge (r28-36) at N/NE/E/SE/SW/W.
+const HERO_ANGLES = [0, Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4, (5 * Math.PI) / 4, (3 * Math.PI) / 2];
+function HeroTrees() {
+  const { scene } = useGLTF(MODELS.tree_bare1);
+  const clones = useMemo(() => {
+    const info = moduleInfo(scene);
+    const norm = 1 / (info.size.y || 1);   // scale = target height in m
+    const r = rng(909);
+    return HERO_ANGLES.map((base) => {
+      const a = base + (r() - 0.5) * 0.4;
+      const rad = 28 + r() * 8;                       // r 28-36
+      const targetH = 7.5 + r() * 4.0;                // height 7.5-11.5m
+      const s = norm * targetH;
+      const node = cloneTinted(info, scene, 0.5);
+      node.position.set(Math.sin(a) * rad, -0.2 - r() * 0.2, Math.cos(a) * rad);
+      node.rotation.y = r() * Math.PI * 2;
+      node.rotation.z = (r() - 0.5) * 0.16;           // slight tilt ±0.08
+      node.scale.set(s, s, s);
+      return node;
+    });
+  }, [scene]);
+  return <>{clones.map((o, i) => <primitive key={i} object={o} />)}</>;
+}
+
+// ============================================================
+//  3. GROUND CLUTTER — seeded scatter, density also rises toward the edge
+// ============================================================
+type ClutterPick = { x: number; z: number; rotY: number; tiltZ: number; scale: number; sink: number; model: number };
+const CLUTTER_MODELS = [
+  MODELS.prop_roots2, MODELS.prop_root, MODELS.prop_stump, MODELS.stump2,
+  MODELS.prop_log, MODELS.moonrock1, MODELS.moonrock2, MODELS.prop_rock,
+];
+// targets (m) + share thresholds, indexed to CLUTTER_MODELS.
+const CLUTTER_TARGET = [2.4, 1.8, 1.4, 1.5, 3.5, 0.7, 0.7, 0.45];
+
+function clutterPlacements(): ClutterPick[] {
+  const r = rng(1337);
+  const out: ClutterPick[] = [];
+  for (let i = 0; i < 600 && out.length < 200; i++) {
+    const x = (r() - 0.5) * 84;
+    const z = (r() - 0.5) * 78;
+    const rad = Math.hypot(x, z);
+    if (rad > BASIN_R || rad < 4) continue;
+    const [cx, cz] = collide(x, z, 1.0);
+    if (Math.hypot(cx - x, cz - z) > 0.01) continue;
+    if (inClearRing(x, z)) continue;
+    const keep = 0.25 + density(rad) * 0.6;                 // clutter everywhere, denser at edge
+    if (r() > keep) continue;
+
+    // weighted model pick: roots2 22 / root 20 / propStump 14 / stump2 12 / log 10
+    //   / moonrock1 8 / moonrock2 8 / rock 6
+    const w = r();
+    let model: number;
+    if (w < 0.22) model = 0;
+    else if (w < 0.42) model = 1;
+    else if (w < 0.56) model = 2;
+    else if (w < 0.68) model = 3;
+    else if (w < 0.78) model = 4;
+    else if (w < 0.86) model = 5;
+    else if (w < 0.94) model = 6;
+    else model = 7;
+
+    const rotY = r() * Math.PI * 2;
+    let tiltZ = 0;
+    if (model === 1) tiltZ = (r() - 0.5) * 0.5;            // single root, small tilt
+    if (model === 4) tiltZ = Math.PI / 2 + (r() - 0.5) * 0.4; // log laid flat (fallen)
+    const scale = 0.7 + r() * 0.8;                          // 0.7-1.5 jitter
+    const sink = -0.05 - r() * 0.2;
+    out.push({ x, z, rotY, tiltZ, scale, sink, model });
+  }
+  return out;
+}
+
+function GroundClutter() {
+  const gltfs = useGLTF(CLUTTER_MODELS);
+  const scenes = gltfs.map((g) => g.scene);
+  const placements = useMemo(() => clutterPlacements(), []);
+  const lists = useMemo(
+    () => scenes.map((scene, mi) => {
+      const info = moduleInfo(scene);
+      const norm = normTo(info, CLUTTER_TARGET[mi]);
       const mats = placements
         .filter((p) => p.model === mi)
         .map((p) => {
           const s = norm * p.scale;
-          return new THREE.Matrix4()
-            .makeTranslation(p.x, 0, p.z)
-            .multiply(new THREE.Matrix4().makeRotationY(p.rotY))
-            .multiply(new THREE.Matrix4().makeScale(s, s, s));
+          const M = new THREE.Matrix4()
+            .makeTranslation(p.x, p.sink, p.z)
+            .multiply(new THREE.Matrix4().makeRotationY(p.rotY));
+          if (p.tiltZ) M.multiply(new THREE.Matrix4().makeRotationZ(p.tiltZ));
+          return M.multiply(new THREE.Matrix4().makeScale(s, s, s));
         });
       return buildInstances(info, mats, 0.4);
     }),
     [scenes, placements]
   );
   return <Rendered list={lists.flat()} />;
+}
+
+// ============================================================
+//  4. CORRUPTED GOTHIC CHAMBER — direct clones, framing (0,4)
+// ============================================================
+// The dark-mirror living room consumed by the forest. 6 pieces ring the SOUTH/back
+// arc (z 8-12) at r 6.5-8 from C=(0,4) so the convergence floor stays clear. Each
+// piece is tilted + half-sunk as if the manor decayed into the basin.
+type GothPiece = { model: keyof typeof MODELS; x: number; z: number; yaw: number; tiltZ: number; tiltX: number; sink: number };
+const GOTH_PIECES: GothPiece[] = [
+  { model: "goth_cabinet", x: -5.5, z: 11.5, yaw: -2.4, tiltZ: 0.10, tiltX: -0.06, sink: -0.35 }, // back wall, leaning/sinking
+  { model: "goth_commode", x: 5.0, z: 11.8, yaw: 2.5, tiltZ: -0.12, tiltX: 0, sink: -0.5 },        // deeply sunk
+  { model: "goth_table", x: 0, z: 10.5, yaw: 0.3, tiltZ: 0.05, tiltX: 0, sink: -0.15 },            // centerpiece, askew
+  { model: "goth_chair", x: -2.6, z: 10.4, yaw: 1.9, tiltZ: -0.25, tiltX: 0, sink: -0.2 },         // toppling (clear of convergence ring)
+  { model: "goth_chair", x: 3.2, z: 9.2, yaw: -1.4, tiltZ: 0.30, tiltX: 0.05, sink: -0.25 },       // 2nd chair, knocked back
+  { model: "goth_commode", x: -1.0, z: 12.3, yaw: 0.8, tiltZ: 0.08, tiltX: -0.04, sink: -0.6 },    // half-swallowed sideboard
+];
+
+function GothicChamber() {
+  const cabinet = useGLTF(MODELS.goth_cabinet);
+  const commode = useGLTF(MODELS.goth_commode);
+  const table = useGLTF(MODELS.goth_table);
+  const chair = useGLTF(MODELS.goth_chair);
+  const sources: Record<string, THREE.Object3D> = {
+    goth_cabinet: cabinet.scene, goth_commode: commode.scene,
+    goth_table: table.scene, goth_chair: chair.scene,
+  };
+  const clones = useMemo(() => {
+    const infoCache = new Map<string, ModuleInfo>();
+    return GOTH_PIECES.map((p) => {
+      const key = p.model as string;
+      const src = sources[key];
+      let info = infoCache.get(key);
+      if (!info) { info = moduleInfo(src); infoCache.set(key, info); }
+      const node = cloneTinted(info, src, 0.5);
+      node.position.set(p.x, p.sink, p.z);
+      node.rotation.order = "YXZ";
+      node.rotation.y = p.yaw;
+      node.rotation.x = p.tiltX;
+      node.rotation.z = p.tiltZ;
+      return node;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cabinet.scene, commode.scene, table.scene, chair.scene]);
+  return <>{clones.map((o, i) => <primitive key={i} object={o} />)}</>;
+}
+
+// ============================================================
+//  5. DYING LANTERNS — direct clones, each with a flickering point light
+// ============================================================
+// Sickly-amber point lights that flicker + occasionally die ("electrically unstable").
+// Flicker is driven by a SEEDED sin sum in useFrame — NO non-seeded randomness in render.
+type LanternSpot = { model: "lamp1" | "chandelier1"; x: number; z: number; hang: number; phase: number; scale: number };
+const LANTERN_SPOTS: LanternSpot[] = [
+  // street lamps around the basin (stand on ground)
+  { model: "lamp1", x: -8, z: 14, hang: 0, phase: 0.0, scale: 1.0 },
+  { model: "lamp1", x: 10, z: -6, hang: 0, phase: 1.7, scale: 1.0 },
+  { model: "lamp1", x: -18, z: -4, hang: 0, phase: 3.1, scale: 1.0 },
+  { model: "lamp1", x: 20, z: 12, hang: 0, phase: 4.6, scale: 1.0 },
+  // chandeliers hung over the gothic chamber + convergence (HANG DOWN from a height)
+  { model: "chandelier1", x: 0, z: 4, hang: 5.5, phase: 2.2, scale: 1.4 },
+  { model: "chandelier1", x: -2, z: 10.5, hang: 4.2, phase: 5.0, scale: 1.1 },
+];
+
+// one lantern: direct-clone mesh + an animated flickering point light.
+function Lantern({ spot, scene }: { spot: LanternSpot; scene: THREE.Object3D }) {
+  const lightRef = useRef<THREE.PointLight>(null);
+  const node = useMemo(() => {
+    // chandelier origin is at the TOP and hangs DOWN → do NOT floor-recenter; hang it.
+    const floor = spot.model !== "chandelier1";
+    const info = moduleInfo(scene, floor);
+    const n = cloneTinted(info, scene, 0.45);
+    n.position.set(spot.x, spot.hang, spot.z);
+    n.scale.setScalar(spot.scale);
+    return n;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene]);
+
+  // light sits roughly at the bulb: lamp head high; chandelier just below its origin.
+  const lightY = spot.model === "chandelier1" ? spot.hang - 0.5 : 3.4 * spot.scale;
+
+  useFrame((state) => {
+    const l = lightRef.current;
+    if (!l) return;
+    const t = state.clock.elapsedTime;
+    // seeded deterministic flicker: layered sins (no Math.random in render).
+    const a = Math.sin(t * 11.3 + spot.phase);
+    const b = Math.sin(t * 27.1 + spot.phase * 2.3);
+    const c = Math.sin(t * 3.7 + spot.phase * 0.7);
+    let flick = 0.55 + 0.32 * a * 0.5 + 0.18 * b * 0.5 + 0.15 * c;
+    // occasional brown-out / death: when the slow wave dips hard, nearly cut out.
+    const dip = Math.sin(t * 0.9 + spot.phase * 1.9);
+    if (dip < -0.86) flick *= 0.08;
+    l.intensity = Math.max(0.05, flick) * (spot.model === "chandelier1" ? 14 : 9);
+  });
+
+  return (
+    <group>
+      <primitive object={node} />
+      {/* Only the 2 chandeliers cast real-time lights (perf budget); the lamp1
+          posts stay dark set-dressing so the scene-wide light count stays sane. */}
+      {spot.model === "chandelier1" && (
+        <pointLight
+          ref={lightRef}
+          position={[spot.x, lightY, spot.z]}
+          color={LAMP_COLOR}
+          intensity={6}
+          distance={16}
+          decay={2}
+        />
+      )}
+    </group>
+  );
+}
+
+function Lanterns() {
+  const lamp = useGLTF(MODELS.lamp1);
+  const chand = useGLTF(MODELS.chandelier1);
+  return (
+    <>
+      {LANTERN_SPOTS.map((spot, i) => (
+        <Lantern key={i} spot={spot} scene={spot.model === "lamp1" ? lamp.scene : chand.scene} />
+      ))}
+    </>
+  );
 }
 
 // ============================================================
@@ -342,6 +552,25 @@ class KitBoundary extends Component<{ fallback: ReactNode; children: ReactNode }
   render() { return this.state.failed ? this.props.fallback : this.props.children; }
 }
 
+// last-resort box fallback so the play area never blanks out if every GLB fails:
+// a low dark ring of boxes marking the basin perimeter.
+export function BoxBasin() {
+  const segs = 16;
+  return (
+    <>
+      {Array.from({ length: segs }).map((_, i) => {
+        const a = (i / segs) * Math.PI * 2;
+        return (
+          <mesh key={i} position={[Math.sin(a) * RING_R, 4.5, Math.cos(a) * RING_R]} rotation={[0, a, 0]}>
+            <boxGeometry args={[18, 11, 4]} />
+            <meshStandardMaterial color={0x1c222b} roughness={0.95} metalness={0.05} emissive={0x03070c} />
+          </mesh>
+        );
+      })}
+    </>
+  );
+}
+
 function Gated({ on, fallback, children }: { on: boolean; fallback: ReactNode; children: ReactNode }) {
   if (!on) return <>{fallback}</>;
   return (
@@ -351,12 +580,21 @@ function Gated({ on, fallback, children }: { on: boolean; fallback: ReactNode; c
   );
 }
 
-export const Walls = () => <Gated on={KIT.walls} fallback={<BoxWalls />}><WallKit /></Gated>;
-export const Floors = () => <Gated on={KIT.floor} fallback={null}><FloorKit /></Gated>;
-export const Pillars = () => <Gated on={KIT.pillars} fallback={null}><PillarKit /></Gated>;
-export const Props = () => <Gated on={KIT.props} fallback={null}><PropKit /></Gated>;
+export const Cliffs = () => <Gated on={KIT.cliffs} fallback={<BoxBasin />}><CliffRing /></Gated>;
+export const Forest = () => <Gated on={KIT.forest} fallback={null}><DeadForest /><HeroTrees /></Gated>;
+export const Clutter = () => <Gated on={KIT.clutter} fallback={null}><GroundClutter /></Gated>;
+export const Gothic = () => <Gated on={KIT.gothic} fallback={null}><GothicChamber /></Gated>;
+export const DyingLights = () => <Gated on={KIT.lanterns} fallback={null}><Lanterns /></Gated>;
 
-// everything at once — drop into the World.
+// everything at once — drop into the World (Game.tsx renders <Kit/>).
 export function Kit() {
-  return (<><Walls /><Floors /><Pillars /><Props /></>);
+  return (
+    <>
+      <Cliffs />
+      <Forest />
+      <Clutter />
+      <Gothic />
+      <DyingLights />
+    </>
+  );
 }

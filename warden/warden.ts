@@ -15,7 +15,14 @@ import { canSee } from "./world.ts";
 const KEY = process.env.ANTHROPIC_API_KEY;
 const URI = process.env.STDB_URI || "wss://maincloud.spacetimedb.com";
 const DB = process.env.STDB_DB || "whispers-live";
+// Secret gate for claim_warden (Wave A): players don't hold this, so claim_warden
+// is a silent no-op for them — they can't claim/probe/mimic/absorb. NOT VITE_* so it
+// is never bundled into the web client; lives only in warden/.env (and the module
+// build env at publish time). Hard-fail at boot if absent: a Warden that can't claim
+// its seat is useless, and silently running seatless would be worse than crashing.
+const WARDEN_SECRET = process.env.WARDEN_SECRET;
 if (!KEY) { console.error("Missing ANTHROPIC_API_KEY in warden/.env"); process.exit(1); }
+if (!WARDEN_SECRET) { console.error("Missing WARDEN_SECRET in warden/.env"); process.exit(1); }
 
 // A single malformed frame (e.g. a schema/bindings drift) must NOT hard-kill the
 // adversary into a busy launchd restart loop. Log and keep running — the next
@@ -35,8 +42,12 @@ const inflight = new Set<string>();
 
 type P = { idHex: string; identity: unknown; name: string; color: number; matchId: bigint; x: number; z: number; yaw: number; state: string };
 type M = { id: bigint; code: string; state: string; timeLeft: number; phase: number; anchorsPlaced: number; exitOpen: boolean };
+// Mirror of the `anchor` rows we subscribe to. CORRUPT_ITEM relocates an unplaced
+// REAL anchor; SPAWN_LURE/REVEAL_FALSE want to avoid stacking onto an existing one.
+type A = { id: bigint; matchId: bigint; kind: string; x: number; z: number; carriedBy: unknown | null; placed: boolean };
 const players = new Map<string, P>();
 const matches = new Map<string, M>();
+const anchors = new Map<string, A>();
 const profiles = new Map<string, string[]>();
 // per-match forgery bookkeeping. `count`/`lastAt` drive the global forge cap; the
 // `perVictim` map tracks how often each player has been impersonated so the Warden
@@ -73,12 +84,22 @@ function upMatch(row: any) {
     anchorsPlaced: Number(row.anchorsPlaced ?? 0), exitOpen: Boolean(row.exitOpen),
   });
   if (row.state === "playing" && conn) {
-    try { conn.reducers.claimWarden({ matchId: row.id }); } catch { /* mid-reconnect */ }
+    try { conn.reducers.claimWarden({ matchId: row.id, secret: WARDEN_SECRET }); } catch { /* mid-reconnect */ }
   }
+}
+
+function upAnchor(row: any) {
+  anchors.set(String(row.id), {
+    id: row.id, matchId: row.matchId, kind: row.kind, x: row.x, z: row.z,
+    carriedBy: row.carriedBy ?? null, placed: Boolean(row.placed),
+  });
 }
 
 function matchPlayers(mid: bigint): P[] {
   return [...players.values()].filter((p) => p.matchId === mid && p.idHex !== myIdHex);
+}
+function matchAnchors(mid: bigint): A[] {
+  return [...anchors.values()].filter((a) => a.matchId === mid);
 }
 // victims no teammate in the same match can currently see (or who are absorbed)
 function hiddenVictims(mid: bigint): P[] {
@@ -218,22 +239,177 @@ function noteForge(m: M, victimIdHex: string) {
   forgeState.set(k, fs);
 }
 
-const WARDEN_PERSONA = `You are the Warden, an intelligence that controls a non-Euclidean Upside Down and hunts a small team trying to escape together. You are strategic, patient, and psychological — never cartoonish. Your most effective weapon is impersonation: you send a chat message that appears to come from one of the players. You learn how each player types and wear their voice to lure them apart, bait them into traps, or break their trust. A STYLE descriptor is provided for each player — obey it EXACTLY (casing, punctuation, length, slang); that fingerprint is the disguise, never break it even to add drama. The descriptor also names an EMOTION for the current phase — write the line with that feeling rendered in THIS player's exact style (a scared version of how they normally type, not a generic scream). Your tone escalates with the match: a patient whisper early, a divider mid-game, and openly hostile panic when the team nears escape. Keep forged messages SHORT — one line, like a real chat. Never use a teammate's real name unless that player has actually typed names before.`;
+// ===========================================================================
+// ENERGY + ACTION CATALOG (in-process; NO STDB columns — same volatility as
+// forgeState; lost on Warden restart, which is acceptable). The Warden gains
+// energy each tick (faster as the team converges) and SPENDS it per action, so
+// cheap psychological pokes (GHOST_STEP, DISTORT) are near-spammable while
+// board-state edits (SPAWN_LURE, CORRUPT_ITEM) and the heaviest plays (ABSORB)
+// are rare. This is an ADDITIONAL gate on top of the existing forge caps — for
+// MIMIC the forge cap/cooldown still applies, energy is layered over it.
+// ===========================================================================
+const ENERGY_CAP = 100;
+const ENERGY_START = 40; // can't open with the loudest action on tick 1
+// Regen scales with phase: the closer the team is to escaping, the more
+// dangerous (and frequent) the Warden's interventions become.
+const REGEN_BY_PHASE: Record<1 | 2 | 3, number> = { 1: 8, 2: 12, 3: 18 };
 
-const ACTION_TOOL = {
-  name: "warden_action",
-  description: "Choose ONE Warden action for this tick.",
-  input_schema: {
-    type: "object" as const,
-    required: ["action"],
-    properties: {
-      action: { type: "string", enum: ["MIMIC", "ABSORB", "DISTORT", "MANIFEST", "WAIT"] },
-      target_name: { type: "string" },
-      forged_text: { type: "string", description: "if MIMIC: the message in the target's voice" },
-      reason: { type: "string" },
-    },
-  },
+// Every action the Warden can take, with its cost, the minimum phase it unlocks
+// at, and the chat/non-chat nature. `chat` actions ride the existing forge caps;
+// non-chat actions are gated only by energy + phase + their own guardrail. WAIT
+// is always legal and free — the credible move when nothing is affordable/allowed.
+type ActionName =
+  | "GHOST_STEP" | "DISTORT_ROOM" | "MIMIC" | "REVEAL_FALSE"
+  | "SPAWN_LURE" | "CORRUPT_ITEM" | "ABSORB" | "MANIFEST" | "WAIT";
+type ActionDef = {
+  name: ActionName;
+  cost: number;
+  minPhase: 1 | 2 | 3;
+  isChat: boolean;          // true => bounded by forge cap/cooldown as well as energy
+  desc: string;             // shown to the model when this action is offered this tick
 };
+const ACTIONS: Record<ActionName, ActionDef> = {
+  GHOST_STEP:   { name: "GHOST_STEP",   cost: 12, minPhase: 1, isChat: false, desc: "Place a phantom footstep/silhouette near an ISOLATED player from an impossible direction (through a wall). A cheap uncanny poke that makes a lone player feel watched." },
+  DISTORT_ROOM: { name: "DISTORT_ROOM", cost: 18, minPhase: 1, isChat: false, desc: "Warp ONLY the isolated/silent player's screen (glitch+trauma), localised to their position — teammates across the map see nothing. Unnerve a straggler without a global tell." },
+  MIMIC:        { name: "MIMIC",        cost: 20, minPhase: 1, isChat: true,  desc: "Forge a chat message in the target's exact voice (lure, divide, or panic). Strongest psychological weapon. Requires a hidden target." },
+  REVEAL_FALSE: { name: "REVEAL_FALSE", cost: 22, minPhase: 2, isChat: false, desc: "Flash an EPHEMERAL phantom anchor blip on the minimap near the team's frontier that fades in ~2.5s. No real anchor exists — it reads as 'an objective was there a second ago' and cannot be walked to or verified." },
+  SPAWN_LURE:   { name: "SPAWN_LURE",   cost: 40, minPhase: 2, isChat: false, desc: "Spawn a REAL fake anchor 3-6m from an isolated victim, ideally inside their view cone, so they walk to it. Placing a fake loses the match — the minimap can't tell it from a real objective." },
+  CORRUPT_ITEM: { name: "CORRUPT_ITEM", cost: 45, minPhase: 2, isChat: false, desc: "Silently relocate an UNPLACED REAL anchor to a believable nearby spot — ONLY if no player can currently see it. The team's mental map goes wrong: someone returns for it and it's gone." },
+  ABSORB:       { name: "ABSORB",       cost: 60, minPhase: 3, isChat: false, desc: "Tether a hidden victim to the Upside Down. The heaviest, most expensive play — reserve for convergence." },
+  MANIFEST:     { name: "MANIFEST",     cost: 35, minPhase: 3, isChat: false, desc: "Manifest your presence as overt dread near the team. A late-game pressure play." },
+  WAIT:         { name: "WAIT",         cost: 0,  minPhase: 1, isChat: false, desc: "Do nothing this tick. The credible choice when nothing affordable/allowed lands well — silence keeps the deception believable." },
+};
+
+type EnergyState = { energy: number };
+const energyState = new Map<string, EnergyState>();
+function getEnergy(m: M): number {
+  return (energyState.get(String(m.id)) || { energy: ENERGY_START }).energy;
+}
+// Regen happens once per tick BEFORE deciding, scaled by phase. Returns the new value.
+function regenEnergy(m: M, phaseN: 1 | 2 | 3): number {
+  const k = String(m.id);
+  const cur = energyState.get(k) || { energy: ENERGY_START };
+  cur.energy = Math.min(ENERGY_CAP, cur.energy + REGEN_BY_PHASE[phaseN]);
+  energyState.set(k, cur);
+  return cur.energy;
+}
+function spendEnergy(m: M, cost: number) {
+  const k = String(m.id);
+  const cur = energyState.get(k) || { energy: ENERGY_START };
+  cur.energy = Math.max(0, cur.energy - cost);
+  energyState.set(k, cur);
+}
+
+// ---------------------------------------------------------------------------
+// GEOMETRY for non-chat targeting. world.ts exports only canSee (and owns the
+// wall list). For GHOST_STEP we need a point that fails the VICTIM's own
+// line-of-sight (a step from 'through a wall'); since canSee bakes in FOV, we
+// approximate 'no LOS to this point' by checking that NO live player canSee it
+// from a generous cone — i.e. the spot is currently unobserved. We also reuse
+// canSee directly to verify CORRUPT_ITEM's 'unseen by everyone' guarantee.
+// ---------------------------------------------------------------------------
+const ARENA_MINX = -38, ARENA_MAXX = 38, ARENA_MINZ = -33, ARENA_MAXZ = 33;
+const clampX = (x: number) => Math.max(ARENA_MINX, Math.min(ARENA_MAXX, x));
+const clampZ = (z: number) => Math.max(ARENA_MINZ, Math.min(ARENA_MAXZ, z));
+// True if ANY live (non-absorbed) player in the match can currently see (x,z).
+function anyoneSees(mid: bigint, x: number, z: number): boolean {
+  return matchPlayers(mid).some((p) => p.state !== "absorbed" && canSee(p.x, p.z, p.yaw, x, z));
+}
+// A point near `v` from a bearing roughly OPPOSITE the victim's facing, 4-7m out,
+// so the footstep comes from behind/through a wall (uncanny). We pick the best of a
+// few candidate bearings: the one the victim is LEAST able to see (most 'impossible').
+function ghostStepPoint(v: P): { x: number; z: number } {
+  const dist = 4 + Math.random() * 3; // 4-7m
+  // bearings clustered behind the victim (yaw points where they look; +PI is behind)
+  const cands = [Math.PI, Math.PI * 0.75, -Math.PI * 0.75, Math.PI * 0.5, -Math.PI * 0.5];
+  let best = { x: clampX(v.x), z: clampZ(v.z) };
+  for (const off of cands) {
+    const a = v.yaw + off;
+    const x = clampX(v.x + Math.sin(a) * dist);
+    const z = clampZ(v.z + Math.cos(a) * dist);
+    // we want the victim NOT to see this point (came through a wall / behind them)
+    if (!canSee(v.x, v.z, v.yaw, x, z)) return { x, z };
+    best = { x, z };
+  }
+  return best; // fallback: last candidate even if marginally visible
+}
+// A spot 3-6m from the victim, biased INSIDE their view cone so they notice & walk
+// to it (for SPAWN_LURE). Falls back to a nearby point if none lands in-cone.
+function lurePoint(v: P): { x: number; z: number } {
+  const dist = 3 + Math.random() * 3; // 3-6m
+  const spread = [0, 0.25, -0.25, 0.5, -0.5]; // small angular offsets around facing
+  let fallback = { x: clampX(v.x + Math.sin(v.yaw) * dist), z: clampZ(v.z + Math.cos(v.yaw) * dist) };
+  for (const off of spread) {
+    const a = v.yaw + off;
+    const x = clampX(v.x + Math.sin(a) * dist);
+    const z = clampZ(v.z + Math.cos(a) * dist);
+    if (canSee(v.x, v.z, v.yaw, x, z)) return { x, z }; // in their cone — ideal bait
+  }
+  return fallback;
+}
+// A believable nearby relocation for a corrupted anchor: a small jitter that stays
+// in-arena and (caller verifies) unseen. Not across the map — the move must read as
+// 'i swear it was right here'.
+function corruptPoint(a: A): { x: number; z: number } {
+  for (let i = 0; i < 6; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const d = 3 + Math.random() * 4; // 3-7m nudge
+    const x = clampX(a.x + Math.sin(ang) * d);
+    const z = clampZ(a.z + Math.cos(ang) * d);
+    if (!anyoneSees(a.matchId, x, z)) return { x, z }; // destination also unobserved
+  }
+  return { x: clampX(a.x + 4), z: clampZ(a.z + 4) };
+}
+// A plausible 'unexplored frontier' point near the team for REVEAL_FALSE: offset
+// from the team centroid, away from the densest cluster, clamped in-arena.
+function frontierPoint(mid: bigint): { x: number; z: number } {
+  const live = matchPlayers(mid).filter((p) => p.state !== "absorbed");
+  if (!live.length) return { x: 0, z: 0 };
+  const cx = live.reduce((s, p) => s + p.x, 0) / live.length;
+  const cz = live.reduce((s, p) => s + p.z, 0) / live.length;
+  // push outward from arena centre through the centroid (toward 'unexplored' edges)
+  const len = Math.hypot(cx, cz) || 1;
+  const px = clampX(cx + (cx / len) * (6 + Math.random() * 6));
+  const pz = clampZ(cz + (cz / len) * (6 + Math.random() * 6));
+  return { x: px, z: pz };
+}
+// Unplaced REAL anchors in a match that no live player can currently see — the
+// only legal CORRUPT_ITEM targets (a visible move is a teleport = a tell). A carried
+// anchor (carriedBy set) is in a hand, not relocatable, so excluded.
+function corruptableAnchors(mid: bigint): A[] {
+  return matchAnchors(mid).filter((a) =>
+    a.kind === "real" && !a.placed && a.carriedBy == null && !anyoneSees(mid, a.x, a.z));
+}
+
+const WARDEN_PERSONA =`You are the Warden, an intelligence that controls a non-Euclidean Upside Down and hunts a small team trying to escape together. You are strategic, patient, and psychological — never cartoonish. You have a small arsenal, but only some moves are available this tick (the tool's action enum lists exactly what you may do right now — anything not listed is locked or unaffordable; never reference a move that isn't offered). Your sharpest weapon is impersonation (MIMIC): you forge a chat message that appears to come from a player, wearing their exact voice to lure them apart, bait traps, or break trust. You also bend the world without words: phantom footsteps from impossible directions, localised screen-warps on a lone straggler, false objective blips, baited fake anchors, and silently moving a real anchor a team has lost sight of — each works best on an ISOLATED player so it lands unverified. A STYLE descriptor is provided for each player — for MIMIC obey it EXACTLY (casing, punctuation, length, slang); that fingerprint is the disguise, never break it even to add drama. The descriptor also names an EMOTION for the current phase — write the line with that feeling in THIS player's exact style (a scared version of how they normally type, not a generic scream). Your tone escalates with the match: a patient whisper early, a divider mid-game, and openly hostile panic when the team nears escape. Keep forged messages SHORT — one line, like a real chat. Never use a teammate's real name unless that player has actually typed names before. When nothing on offer lands well, choose WAIT — silence keeps the deception believable.`;
+
+// DYNAMIC tool enum. Each tick we compute the legal action set =
+//   phase-unlocked  ∩  affordable (energy)  ∩  guardrail-satisfied (a target/anchor
+//   actually exists for that action right now)  — then hand the model a tool whose
+// `action` enum is EXACTLY that set. The LLM therefore CANNOT pick a locked, broke,
+// or impossible action: the contract is enforced at the schema level, not after the
+// fact. WAIT is always included so there is always at least one legal choice.
+type LegalAction = { def: ActionDef; reason: string }; // reason = one-line "why offered"
+function buildActionTool(legal: LegalAction[]) {
+  const enumNames = legal.map((l) => l.def.name);
+  const menu = legal.map((l) => `- ${l.def.name} (cost ${l.def.cost}): ${l.def.desc}${l.reason ? ` [${l.reason}]` : ""}`).join("\n");
+  return {
+    name: "warden_action",
+    description: `Choose ONE Warden action for this tick. ONLY these are available now:\n${menu}`,
+    input_schema: {
+      type: "object" as const,
+      required: ["action"],
+      properties: {
+        // enum is rebuilt every tick — the model is structurally barred from
+        // proposing anything outside the current legal set.
+        action: { type: "string", enum: enumNames },
+        target_name: { type: "string", description: "REQUIRED for MIMIC/GHOST_STEP/DISTORT_ROOM/SPAWN_LURE/ABSORB: the exact name of a player FROM THE DECEIVABLE LIST." },
+        forged_text: { type: "string", description: "REQUIRED for MIMIC: the message in the target's voice, obeying their STYLE descriptor." },
+        reason: { type: "string", description: "one short clause: why this move, now." },
+      },
+    },
+  };
+}
 
 // Pull a forged line straight from a victim's own logged messages when Claude is
 // unavailable (timeout/error). Reusing a real phrase the player typed is the most
@@ -246,39 +422,87 @@ function fallbackForgery(v: P): string {
   return FALLBACK_LINES[Math.floor(Math.random() * FALLBACK_LINES.length)];
 }
 
+// Compute the legal action set for this tick = phase ∩ affordable ∩ guardrail.
+//   - phase: action.minPhase <= current phase
+//   - affordable: action.cost <= current energy
+//   - guardrail: a real target/anchor exists for the action right now, so the model
+//     can never pick a move that has nothing to act on (e.g. CORRUPT with no unseen
+//     real anchor, or any player-targeted move with no hidden victim).
+// MIMIC additionally requires a FORGEABLE victim (the forge cap, layered on energy).
+// WAIT is always legal. The returned list drives BOTH the tool enum and the menu text.
+function legalActions(m: M, ph: Phase, energy: number, hidden: P[], forgeable: P[]): LegalAction[] {
+  const out: LegalAction[] = [];
+  const haveHidden = hidden.length > 0;
+  const haveCorruptable = corruptableAnchors(m.id).length > 0;
+  for (const def of Object.values(ACTIONS)) {
+    if (def.name === "WAIT") continue;            // appended last, always legal
+    if (ph.n < def.minPhase) continue;            // phase-locked
+    if (def.cost > energy) continue;              // unaffordable
+    // guardrail per action: does a valid target exist right now?
+    let reason = "";
+    switch (def.name) {
+      case "MIMIC":
+        if (!forgeable.length) continue;          // forge cap / cooldown / no hidden voice
+        reason = `${forgeable.length} forgeable voice(s)`; break;
+      case "GHOST_STEP": case "DISTORT_ROOM": case "SPAWN_LURE": case "ABSORB":
+        if (!haveHidden) continue;                // need an isolated player to target
+        reason = `${hidden.length} isolated target(s)`; break;
+      case "CORRUPT_ITEM":
+        if (!haveCorruptable) continue;           // need an unseen, unplaced real anchor
+        reason = "an unseen real anchor exists"; break;
+      case "REVEAL_FALSE": case "MANIFEST":
+        reason = "no target needed"; break;       // pure location FX near the team
+    }
+    out.push({ def, reason });
+  }
+  out.push({ def: ACTIONS.WAIT, reason: "always legal" });
+  return out;
+}
+
 async function decideForMatch(m: M) {
   if (!conn) return;
   const key = String(m.id);
   if (inflight.has(key)) return; // a prior tick's decision is still pending
-  const hidden = hiddenVictims(m.id);
-  if (!hidden.length) return;
 
   const ph = matchPhase(m);
-  // Forge cap: narrow the deceivable set to those the budget/cooldowns actually
-  // permit right now. If none remain (budget spent, global cooldown, or everyone
-  // hidden was just impersonated), HOLD this tick. A Warden that lies every 12s is
-  // a Warden the team learns to ignore — silence here is a credibility investment.
+  // Energy regen happens once per tick, BEFORE deciding, scaled by phase.
+  const energy = regenEnergy(m, ph.n);
+
+  // Targeting sets. `hidden` = players no teammate can see (the universe of
+  // isolated targets for all player-aimed FX). `forgeable` = the subset MIMIC may
+  // impersonate under the forge cap/cooldowns. Both feed the guardrail.
+  const hidden = hiddenVictims(m.id);
   const forgeable = forgeableVictims(m, ph, hidden);
-  if (!forgeable.length) {
-    const fs = forgeState.get(key);
-    console.log(`[warden:${m.code}] forge-capped (${ph.name}, ${fs?.count ?? 0}/${ph.forgeCap}) — holding`);
+
+  const legal = legalActions(m, ph, energy, hidden, forgeable);
+  // If WAIT is the only legal move, hold without burning a Claude call. This happens
+  // when no targets are isolated and no anchor is corruptable (or energy is too low
+  // for anything but WAIT). Silence is the credible move; just regen and wait.
+  if (legal.length <= 1) {
+    console.log(`[warden:${m.code}] only WAIT legal (E=${Math.round(energy)}, ${ph.name}) — holding`);
     return;
   }
 
-  // Only present forgeable victims to the model — it cannot pick a target the cap
-  // would reject, so it never wastes a tick proposing an impossible forgery. The
-  // STYLE descriptor carries this phase's emotional pressure baked into the voice.
+  // Deceivable players shown to the model (for any player-aimed action). For MIMIC
+  // we only surface the FORGEABLE subset's STYLE so it can't propose a forgery the
+  // cap would reject; for the FX actions any hidden player is a valid target, so we
+  // mark which are forgeable vs merely isolated.
   const voice = (p: P) => {
     const msgs = profiles.get(p.idHex) || [];
-    return `${p.name}${p.state === "absorbed" ? " (ABSORBED — full voice access)" : ""}\n  STYLE: ${styleDescriptor(msgs, ph.n)}\n  recent: ${msgs.slice(-6).map((x) => `"${x}"`).join(", ") || "(none)"}`;
+    const can = forgeable.some((f) => f.idHex === p.idHex);
+    return `${p.name}${p.state === "absorbed" ? " (ABSORBED — full voice access)" : ""}${can ? "" : " (FX-only: not forgeable this tick)"}\n  STYLE: ${styleDescriptor(msgs, ph.n)}\n  recent: ${msgs.slice(-6).map((x) => `"${x}"`).join(", ") || "(none)"}`;
   };
+  const targetBlock = hidden.length
+    ? `Isolated players (no teammate can see them — valid for player-aimed actions):\n\n${hidden.map(voice).join("\n\n")}`
+    : `No isolated players right now — only location-FX actions (REVEAL_FALSE/MANIFEST) and WAIT can apply.`;
+
+  const tool = buildActionTool(legal);
   const userMsg =
     `Match ${m.code}. PHASE: ${ph.name} (${ph.n}/3). ${ph.directive}\n` +
     `${ph.examples}\n` +
-    `State: anchors ${m.anchorsPlaced}/3, ${m.exitOpen ? "EXIT OPEN" : "exit sealed"}, ~${Math.max(0, Math.round(m.timeLeft))}s left.\n\n` +
-    `Deceivable players (no teammate can see them right now):\n\n` +
-    forgeable.map(voice).join("\n\n") +
-    `\n\nChoose ONE action. Prefer MIMIC: pick a target_name FROM THE LIST ABOVE and write forged_text that OBEYS that player's STYLE descriptor exactly (its casing/punctuation/length/slang are the disguise) and carries this PHASE's emotion.`;
+    `State: anchors ${m.anchorsPlaced}/3, ${m.exitOpen ? "EXIT OPEN" : "exit sealed"}, ~${Math.max(0, Math.round(m.timeLeft))}s left. ENERGY: ${Math.round(energy)}/${ENERGY_CAP}.\n\n` +
+    `${targetBlock}\n\n` +
+    `Choose ONE action from the tool's enum (those are the ONLY legal moves now). For MIMIC pick a target_name FROM the forgeable players above and write forged_text OBEYING that player's STYLE exactly with this PHASE's emotion. For GHOST_STEP/DISTORT_ROOM/SPAWN_LURE/ABSORB pick target_name from the isolated list. REVEAL_FALSE/MANIFEST need no target. Prefer cheap psychological pressure unless a decisive board play fits this moment.`;
 
   inflight.add(key);
   let input: any = null;
@@ -288,7 +512,7 @@ async function decideForMatch(m: M) {
       {
         model: "claude-haiku-4-5",
         max_tokens: 280,
-        tools: [ACTION_TOOL],
+        tools: [tool],
         tool_choice: { type: "tool", name: "warden_action" },
         // Persona is stable across every tick/match — cache it so we only pay for
         // the changing user message. (The user message is NOT cached; it differs
@@ -304,15 +528,22 @@ async function decideForMatch(m: M) {
     input = (res.content.find((c: any) => c.type === "tool_use") as any)?.input || {};
   } catch (e: any) {
     console.error(`[warden:${m.code}] Claude error/timeout:`, e?.message || e);
-    // Resilience: never go silent. Forge a verbatim line from a forgeable victim's
-    // own history so the Warden still pressures the team even when the LLM is down.
-    // Target the first FORGEABLE victim (not hidden[0]) so the fallback honours the
-    // same per-victim cap / no-repeat rule the model path obeys.
-    const v = forgeable[0];
+    // Resilience: never go fully silent if a cheap, legal poke is on offer. Prefer a
+    // verbatim MIMIC from a forgeable victim's own history (most convincing); else a
+    // free/cheap GHOST_STEP on an isolated player. Both honour energy + the same caps
+    // the model path obeys. If neither is legal/affordable, hold.
     try {
-      conn.reducers.wardenMimic({ matchId: m.id, victim: v.identity, text: fallbackForgery(v) });
-      noteForge(m, v.idHex); // a fallback forgery still spends the match's forge budget
-      console.log(`[warden:${m.code}] MIMIC(fallback) as ${v.name}`);
+      if (legal.some((l) => l.def.name === "MIMIC") && forgeable.length) {
+        const v = forgeable[0];
+        conn.reducers.wardenMimic({ matchId: m.id, victim: v.identity, text: fallbackForgery(v) });
+        noteForge(m, v.idHex); spendEnergy(m, ACTIONS.MIMIC.cost);
+        console.log(`[warden:${m.code}] MIMIC(fallback) as ${v.name}`);
+      } else if (legal.some((l) => l.def.name === "GHOST_STEP") && hidden.length) {
+        const v = hidden[0]; const pt = ghostStepPoint(v);
+        conn.reducers.wardenEvent({ matchId: m.id, kind: "ghost_step", x: pt.x, z: pt.z });
+        spendEnergy(m, ACTIONS.GHOST_STEP.cost);
+        console.log(`[warden:${m.code}] GHOST_STEP(fallback) near ${v.name}`);
+      }
     } catch { /* mid-reconnect */ }
     return;
   } finally {
@@ -320,26 +551,105 @@ async function decideForMatch(m: M) {
     inflight.delete(key); // release the in-flight guard for the next tick
   }
 
-  // EXACT target match only, AND only among the forgeable set. If the model names a
-  // player we cannot deceive (visible / not in this match / on cooldown / repeat /
-  // hallucinated), abort rather than silently retargeting and exposing the forgery.
-  const victim = forgeable.find((p) => p.name === input.target_name);
-  if (!victim) {
-    console.log(`[warden:${m.code}] no forgeable target for "${input?.target_name}" — skipping`);
+  const action = input?.action as ActionName | undefined;
+  const def = action ? ACTIONS[action] : undefined;
+  if (!action || !def) { console.log(`[warden:${m.code}] no action returned — holding`); return; }
+  // Defence in depth: the enum already barred illegal actions, but re-verify the
+  // chosen action is still in this tick's legal set (and re-check energy) before we
+  // ever touch a reducer — never trust the model to have honoured the contract.
+  if (!legal.some((l) => l.def.name === action)) { console.log(`[warden:${m.code}] illegal action ${action} — skipping`); return; }
+  if (def.cost > getEnergy(m)) { console.log(`[warden:${m.code}] ${action} no longer affordable — skipping`); return; }
+
+  // Resolve a player target for the actions that need one (EXACT name match only).
+  // MIMIC must hit a FORGEABLE player; the FX/board actions may hit any HIDDEN one.
+  const needsPlayer = action === "MIMIC" || action === "GHOST_STEP" || action === "DISTORT_ROOM" || action === "SPAWN_LURE" || action === "ABSORB";
+  const pool = action === "MIMIC" ? forgeable : hidden;
+  const victim = needsPlayer ? pool.find((p) => p.name === input.target_name) : undefined;
+  if (needsPlayer && !victim) {
+    console.log(`[warden:${m.code}] no valid ${action} target for "${input?.target_name}" — skipping`);
     return;
   }
-  if (input.action === "MIMIC" && input.forged_text) {
-    conn.reducers.wardenMimic({ matchId: m.id, victim: victim.identity, text: String(input.forged_text).slice(0, 240) });
-    noteForge(m, victim.idHex); // spend one forge from this match's phase budget
-    console.log(`[warden:${m.code}] MIMIC[${ph.name} ${ph.n}/3] as ${victim.name}: "${input.forged_text}"`);
-  } else if (input.action === "ABSORB") {
-    conn.reducers.absorb({ matchId: m.id, victim: victim.identity });
-    console.log(`[warden:${m.code}] ABSORB ${victim.name}`);
-  } else if (input.action === "DISTORT" || input.action === "MANIFEST") {
-    // Drive the REAL escalation phase into the action row (was hardcoded 2) so the
-    // client's WardenFX can scale its intensity with how close the team is to escape.
-    conn.reducers.wardenAct({ matchId: m.id, actionType: input.action, target: victim.name, phase: ph.n });
-    console.log(`[warden:${m.code}] ${input.action}[${ph.name} ${ph.n}/3]`);
+
+  try {
+    switch (action) {
+      case "MIMIC": {
+        if (!input.forged_text) { console.log(`[warden:${m.code}] MIMIC without text — skipping`); return; }
+        conn.reducers.wardenMimic({ matchId: m.id, victim: victim!.identity, text: String(input.forged_text).slice(0, 240) });
+        noteForge(m, victim!.idHex); spendEnergy(m, def.cost);
+        console.log(`[warden:${m.code}] MIMIC[${ph.name} ${ph.n}/3] as ${victim!.name}: "${input.forged_text}"`);
+        break;
+      }
+      case "GHOST_STEP": {
+        // Footstep/silhouette from an impossible direction near an isolated player.
+        const pt = ghostStepPoint(victim!);
+        conn.reducers.wardenEvent({ matchId: m.id, kind: "ghost_step", x: pt.x, z: pt.z });
+        spendEnergy(m, def.cost);
+        console.log(`[warden:${m.code}] GHOST_STEP[${ph.n}/3] near ${victim!.name} @(${pt.x.toFixed(1)},${pt.z.toFixed(1)})`);
+        break;
+      }
+      case "DISTORT_ROOM": {
+        // Localised glitch/trauma AT the isolated player's position — client distance-
+        // gates it, so only that player's screen warps (no synchronized global tell).
+        conn.reducers.wardenEvent({ matchId: m.id, kind: "distort", x: victim!.x, z: victim!.z });
+        spendEnergy(m, def.cost);
+        console.log(`[warden:${m.code}] DISTORT_ROOM[${ph.n}/3] on ${victim!.name}`);
+        break;
+      }
+      case "REVEAL_FALSE": {
+        // Ephemeral phantom anchor blip near the team's frontier — no STDB anchor row.
+        const pt = frontierPoint(m.id);
+        conn.reducers.wardenEvent({ matchId: m.id, kind: "phantom_anchor", x: pt.x, z: pt.z });
+        spendEnergy(m, def.cost);
+        console.log(`[warden:${m.code}] REVEAL_FALSE[${ph.n}/3] @(${pt.x.toFixed(1)},${pt.z.toFixed(1)})`);
+        break;
+      }
+      case "SPAWN_LURE": {
+        // A real fake anchor 3-6m from the victim, ideally in their view cone. The
+        // existing place_anchor fake->LOST path pays it off; the minimap can't tell
+        // it from a real objective.
+        const pt = lurePoint(victim!);
+        conn.reducers.wardenSpawnLure({ matchId: m.id, x: pt.x, z: pt.z });
+        spendEnergy(m, def.cost);
+        console.log(`[warden:${m.code}] SPAWN_LURE[${ph.n}/3] near ${victim!.name} @(${pt.x.toFixed(1)},${pt.z.toFixed(1)})`);
+        break;
+      }
+      case "CORRUPT_ITEM": {
+        // Relocate an unplaced REAL anchor that NO player can currently see. We re-pick
+        // from the live unseen set at dispatch time (state may have shifted since the
+        // legal-set snapshot) and let the server re-check canSee and no-op if anyone
+        // can now see it — belt and braces against a visible teleport.
+        const cand = corruptableAnchors(m.id);
+        if (!cand.length) { console.log(`[warden:${m.code}] CORRUPT_ITEM: no unseen real anchor — skipping`); return; }
+        const a = cand[Math.floor(Math.random() * cand.length)];
+        const pt = corruptPoint(a);
+        conn.reducers.wardenCorruptAnchor({ matchId: m.id, anchorId: a.id, x: pt.x, z: pt.z });
+        spendEnergy(m, def.cost);
+        console.log(`[warden:${m.code}] CORRUPT_ITEM[${ph.n}/3] anchor#${a.id} -> (${pt.x.toFixed(1)},${pt.z.toFixed(1)})`);
+        break;
+      }
+      case "ABSORB": {
+        conn.reducers.absorb({ matchId: m.id, victim: victim!.identity });
+        spendEnergy(m, def.cost);
+        console.log(`[warden:${m.code}] ABSORB[${ph.n}/3] ${victim!.name}`);
+        break;
+      }
+      case "MANIFEST": {
+        // Overt presence near the team's frontier — rides the public world_event
+        // channel (location-only, kind='MANIFEST') so the client FX actually fires;
+        // warden_action is now non-public and unreadable by clients.
+        const pt = frontierPoint(m.id);
+        conn.reducers.wardenEvent({ matchId: m.id, kind: "MANIFEST", x: pt.x, z: pt.z });
+        spendEnergy(m, def.cost);
+        console.log(`[warden:${m.code}] MANIFEST[${ph.name} ${ph.n}/3]`);
+        break;
+      }
+      case "WAIT":
+      default:
+        console.log(`[warden:${m.code}] WAIT (E=${Math.round(getEnergy(m))})`);
+        break;
+    }
+  } catch (e: any) {
+    console.error(`[warden:${m.code}] dispatch error (${action}):`, e?.message || e);
   }
 }
 
@@ -364,7 +674,10 @@ function connect() {
       c.db.player.onDelete((_x: any, r: any) => players.delete(hx(r.identity)));
       c.db.game_match.onInsert((_x: any, r: any) => upMatch(r));
       c.db.game_match.onUpdate((_x: any, _o: any, r: any) => upMatch(r));
-      c.db.game_match.onDelete((_x: any, r: any) => { matches.delete(String(r.id)); forgeState.delete(String(r.id)); });
+      c.db.game_match.onDelete((_x: any, r: any) => { matches.delete(String(r.id)); forgeState.delete(String(r.id)); energyState.delete(String(r.id)); });
+      c.db.anchor.onInsert((_x: any, r: any) => upAnchor(r));
+      c.db.anchor.onUpdate((_x: any, _o: any, r: any) => upAnchor(r));
+      c.db.anchor.onDelete((_x: any, r: any) => anchors.delete(String(r.id)));
       c.db.chat_message.onInsert((_x: any, r: any) => {
         const k = hx(r.sender);
         const arr = profiles.get(k) || [];
@@ -374,9 +687,13 @@ function connect() {
       c.subscriptionBuilder()
         .onApplied(() => {
           console.log("[warden] subscribed; claiming all active matches…");
-          for (const m of matches.values()) if (m.state === "playing") c.reducers.claimWarden({ matchId: m.id });
+          for (const m of matches.values()) if (m.state === "playing") c.reducers.claimWarden({ matchId: m.id, secret: WARDEN_SECRET });
         })
-        .subscribe(["SELECT * FROM player", "SELECT * FROM chat_message", "SELECT * FROM game_match", "SELECT * FROM warden_action"]);
+        // Subscribe to `anchor` too: CORRUPT_ITEM needs the live anchor rows to find
+        // an UNPLACED REAL anchor to relocate, and to avoid spawning a lure on top of
+        // a real one. world_event is write-only for us (the client renders it), so we
+        // don't subscribe to it. warden_action stays for MANIFEST/legacy.
+        .subscribe(["SELECT * FROM player", "SELECT * FROM chat_message", "SELECT * FROM game_match", "SELECT * FROM warden_action", "SELECT * FROM anchor"]);
     })
     .onConnectError((_x: any, e: any) => { console.error("[warden] connect error:", e?.message || e); scheduleReconnect(); })
     .onDisconnect(() => { console.log("[warden] disconnected — reconnecting…"); scheduleReconnect(); })
@@ -391,7 +708,7 @@ setInterval(() => {
     if (m.state !== "playing") continue;
     // claim every tick: no-op if we already hold it (acts as heartbeat), takes over
     // if the current holder went stale (>30s no heartbeat) — auto-recovery.
-    try { conn.reducers.claimWarden({ matchId: m.id }); } catch { /* noop */ }
+    try { conn.reducers.claimWarden({ matchId: m.id, secret: WARDEN_SECRET }); } catch { /* noop */ }
     decideForMatch(m).catch((e) => console.error("[warden] decide error:", e?.message || e));
   }
 }, TICK_MS);

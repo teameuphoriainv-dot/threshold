@@ -22,8 +22,11 @@ import SetAvatarReducer from "../set_avatar_reducer";
 import SetNameReducer from "../set_name_reducer";
 import StartMatchReducer from "../start_match_reducer";
 import WardenActReducer from "../warden_act_reducer";
+import WardenCorruptAnchorReducer from "../warden_corrupt_anchor_reducer";
+import WardenEventReducer from "../warden_event_reducer";
 import WardenHeartbeatReducer from "../warden_heartbeat_reducer";
 import WardenMimicReducer from "../warden_mimic_reducer";
+import WardenSpawnLureReducer from "../warden_spawn_lure_reducer";
 
 export type AbsorbParams = __Infer<typeof AbsorbReducer>;
 export type ClaimWardenParams = __Infer<typeof ClaimWardenReducer>;
@@ -41,6 +44,9 @@ export type SetAvatarParams = __Infer<typeof SetAvatarReducer>;
 export type SetNameParams = __Infer<typeof SetNameReducer>;
 export type StartMatchParams = __Infer<typeof StartMatchReducer>;
 export type WardenActParams = __Infer<typeof WardenActReducer>;
+export type WardenCorruptAnchorParams = __Infer<typeof WardenCorruptAnchorReducer>;
+export type WardenEventParams = __Infer<typeof WardenEventReducer>;
 export type WardenHeartbeatParams = __Infer<typeof WardenHeartbeatReducer>;
 export type WardenMimicParams = __Infer<typeof WardenMimicReducer>;
+export type WardenSpawnLureParams = __Infer<typeof WardenSpawnLureReducer>;
 

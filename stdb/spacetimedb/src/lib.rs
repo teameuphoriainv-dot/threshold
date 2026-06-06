@@ -134,7 +134,15 @@ pub struct Tether {
 }
 
 /// Append-only Warden action log per match — clients read it to fire FX.
-#[spacetimedb::table(accessor = warden_action, public)]
+///
+/// NON-public as of the indistinguishability pass: the legacy path carried a
+/// victim NAME in `target` and broadcast Warden intent (DISTORT/MANIFEST) to
+/// every subscribed client, a clean "the Warden just acted on <name> now" tell.
+/// MANIFEST/legacy FX still write here, but the rows are no longer streamed to
+/// game clients. Location-only FX migrated to the public `world_event` table.
+/// (Dropping `public` is an access-modifier change, NOT a column change — clean
+/// additive migration, no --delete-data.)
+#[spacetimedb::table(accessor = warden_action)]
 pub struct WardenAction {
     #[primary_key]
     #[auto_inc]
@@ -146,6 +154,36 @@ pub struct WardenAction {
     pub created_at: Timestamp,
 }
 
+/// Warden claim, per match. NON-public: never streamed to game clients, so
+/// who/whether a Warden exists is invisible. Replaces game_match.warden_*.
+/// (Brand-new table = clean additive migration.)
+#[spacetimedb::table(accessor = warden_seat)]
+pub struct WardenSeat {
+    #[primary_key]
+    pub match_id: u64,
+    pub warden_identity: Identity,
+    pub last_action: Timestamp,
+}
+
+/// Public, LOCATION-ONLY FX trigger. Carries NO identity / victim name and NO
+/// 'forged' flag — a client cannot tell which player (if any) an event concerns,
+/// nor whether it was Warden-driven. The client distance-gates rendering, so an
+/// unaffected player perceives nothing and there is no row-presence signal to
+/// cross-reference. This is the spine of all non-chat deception FX. A row says
+/// only "something happened at (x,z)". (Brand-new table = clean additive.)
+#[spacetimedb::table(accessor = world_event, public)]
+pub struct WorldEvent {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub match_id: u64,
+    pub kind: String,   // "ghost_step" | "phantom_anchor" | "distort" | "MANIFEST" | ...  (NEVER "MIMIC")
+    pub x: f32,
+    pub z: f32,
+    pub created_at: Timestamp,
+}
+
 // ============================================================
 //  HELPERS
 // ============================================================
@@ -154,6 +192,18 @@ const NAMES: [&str; 8] = ["Mara", "Cass", "Ezra", "Wren", "Sol", "Vale", "Juno",
 const COLORS: [u32; 8] = [0xff9a5c, 0xffc46b, 0xff7a8a, 0xffd27a, 0xc98bff, 0x7ad1ff, 0x8affc4, 0xff6f5e];
 const CODE_ALPHA: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars
 const WARDEN_STALE_MICROS: i64 = 30_000_000; // 30s
+
+/// Shared secret gating `claim_warden`. The module WASM is server-side only and
+/// never downloaded by browsers, so a module const is not client-visible.
+/// `option_env!` keeps the secret in the CI/build env (not source control) when
+/// set, with a non-empty fallback so the module still builds locally without it.
+/// The Warden client passes this via a NON-`VITE_` env var (never bundled into
+/// the web client), so ordinary players cannot claim, mimic, or absorb — and a
+/// wrong/absent secret is a silent no-op that reveals nothing about seat state.
+const WARDEN_SECRET: &str = match option_env!("WARDEN_SECRET") {
+    Some(s) => s,
+    None => "whispers-warden-9f3c1a7e6b2d4f80a5c9e1d3b7f02468",
+};
 
 // ----- avatar column defaults (mirror DEFAULT_AVATAR in web/src/avatar.ts) ----
 const DEF_BUILD: u8 = 1;
@@ -230,8 +280,100 @@ fn seed_anchors(ctx: &ReducerContext, match_id: u64) {
     ctx.db.anchor().insert(Anchor { id: 0, match_id, kind: "fake".to_string(), x: 12.0, z: -18.0, carried_by: None, placed: false });
 }
 
+/// Warden authority now lives in the NON-public `warden_seat` table, keyed by
+/// match_id. Signature unchanged so every caller compiles untouched; it simply
+/// no longer reads `m.warden_identity` (that column is frozen at None forever).
 fn is_warden_of(ctx: &ReducerContext, m: &GameMatch) -> bool {
-    m.warden_identity == Some(ctx.sender())
+    ctx.db
+        .warden_seat()
+        .match_id()
+        .find(m.id)
+        .map(|s| s.warden_identity == ctx.sender())
+        .unwrap_or(false)
+}
+
+// ----- world geometry / line-of-sight (ported verbatim from web/src/world.ts) -
+// Used server-side so the Warden's board edits (CORRUPT_ITEM) can verify that a
+// relocation is UNOBSERVED — a visible teleport would be a tell. Walls are the
+// same axis-aligned footprints the client uses for occlusion (PRD §5.1).
+
+/// (x, z, w, d) wall footprints — MUST stay in sync with WALLS in world.ts.
+const WALLS: [(f32, f32, f32, f32); 20] = [
+    // outer boundary (arena)
+    (0.0, -35.0, 80.0, 1.2), (0.0, 35.0, 80.0, 1.2),
+    (-40.0, 0.0, 1.2, 72.0), (40.0, 0.0, 1.2, 72.0),
+    // central hub partial walls
+    (-9.0, -10.0, 14.0, 1.0), (9.0, -10.0, 14.0, 1.0),
+    (-16.0, 0.0, 1.0, 22.0), (16.0, 0.0, 1.0, 22.0),
+    // north satellite room
+    (-22.0, -24.0, 1.0, 18.0), (22.0, -24.0, 1.0, 18.0),
+    (-13.0, -33.0, 18.0, 1.0), (13.0, -33.0, 18.0, 1.0),
+    // west satellite room
+    (-30.0, -6.0, 16.0, 1.0), (-30.0, 14.0, 16.0, 1.0), (-38.0, 4.0, 1.0, 18.0),
+    // east satellite room
+    (30.0, -6.0, 16.0, 1.0), (30.0, 14.0, 16.0, 1.0), (38.0, 4.0, 1.0, 18.0),
+    // inner baffles that break sightlines (make mimicry bite)
+    (-6.0, 18.0, 12.0, 1.0), (10.0, -22.0, 1.0, 12.0),
+];
+
+const SEE_DIST: f32 = 22.0;
+// cos(58°) half-cone, matching SEE_FOV in world.ts.
+const SEE_FOV: f32 = 0.529_919_27;
+
+/// slab method: does segment a->b intersect wall AABB (x, z, w, d)?
+fn seg_hits_box(ax: f32, az: f32, bx: f32, bz: f32, wall: (f32, f32, f32, f32)) -> bool {
+    let (wx, wz, ww, wd) = wall;
+    let minx = wx - ww / 2.0;
+    let maxx = wx + ww / 2.0;
+    let minz = wz - wd / 2.0;
+    let maxz = wz + wd / 2.0;
+    let mut t0 = 0.0f32;
+    let mut t1 = 1.0f32;
+    let dx = bx - ax;
+    let dz = bz - az;
+    let edges = [(-dx, ax - minx), (dx, maxx - ax), (-dz, az - minz), (dz, maxz - az)];
+    for (p, q) in edges {
+        if p.abs() < 1e-9 {
+            if q < 0.0 { return false; }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                if t > t1 { return false; }
+                if t > t0 { t0 = t; }
+            } else {
+                if t < t0 { return false; }
+                if t < t1 { t1 = t; }
+            }
+        }
+    }
+    t0 <= t1
+}
+
+fn has_line_of_sight(ax: f32, az: f32, bx: f32, bz: f32) -> bool {
+    !WALLS.iter().any(|&w| seg_hits_box(ax, az, bx, bz, w))
+}
+
+/// Can a viewer at (px,pz) facing yaw SEE world point (tx,tz)? range + FOV + occlusion.
+fn can_see(px: f32, pz: f32, yaw: f32, tx: f32, tz: f32) -> bool {
+    let dx = tx - px;
+    let dz = tz - pz;
+    let dist = (dx * dx + dz * dz).sqrt();
+    if dist > SEE_DIST { return false; }
+    if dist < 0.001 { return true; }
+    let fwdx = yaw.sin();
+    let fwdz = yaw.cos();
+    let dot = (dx / dist) * fwdx + (dz / dist) * fwdz;
+    if dot < SEE_FOV { return false; }
+    has_line_of_sight(px, pz, tx, tz)
+}
+
+/// True if ANY active player in the match can currently see world point (x,z).
+fn point_observed(ctx: &ReducerContext, match_id: u64, x: f32, z: f32) -> bool {
+    ctx.db
+        .player()
+        .match_id()
+        .filter(match_id)
+        .any(|p| p.state == "active" && can_see(p.x, p.z, p.yaw, x, z))
 }
 
 // ============================================================
@@ -512,23 +654,52 @@ pub fn rescue(ctx: &ReducerContext, tether_id: u64) {
 //  WARDEN (privileged client) REDUCERS — per match
 // ============================================================
 
+/// Claim (or refresh / stale-take-over) the Warden seat for a match. Gated by a
+/// shared `secret`: a wrong/absent secret is a SILENT no-op, so an ordinary
+/// player cannot claim the seat OR probe whether one exists (the seat lives in
+/// the NON-public `warden_seat` table and is never streamed to game clients).
+/// game_match.warden_* is NO LONGER touched — the seat lives entirely here.
 #[spacetimedb::reducer]
-pub fn claim_warden(ctx: &ReducerContext, match_id: u64) {
-    if let Some(m) = ctx.db.game_match().id().find(match_id) {
-        let age = ctx.timestamp.to_micros_since_unix_epoch() - m.warden_last_action.to_micros_since_unix_epoch();
-        let stale = age > WARDEN_STALE_MICROS;
-        if m.warden_identity.is_none() || m.warden_identity == Some(ctx.sender()) || stale {
-            ctx.db.game_match().id().update(GameMatch { warden_identity: Some(ctx.sender()), warden_last_action: ctx.timestamp, ..m });
+pub fn claim_warden(ctx: &ReducerContext, match_id: u64, secret: String) {
+    if secret != WARDEN_SECRET { return; } // silent: no client can observe timing here
+    if ctx.db.game_match().id().find(match_id).is_none() { return; }
+    match ctx.db.warden_seat().match_id().find(match_id) {
+        None => {
+            ctx.db.warden_seat().insert(WardenSeat {
+                match_id,
+                warden_identity: ctx.sender(),
+                last_action: ctx.timestamp,
+            });
+        }
+        Some(seat) => {
+            let age = ctx.timestamp.to_micros_since_unix_epoch()
+                - seat.last_action.to_micros_since_unix_epoch();
+            let stale = age > WARDEN_STALE_MICROS;
+            if seat.warden_identity == ctx.sender() || stale {
+                ctx.db.warden_seat().match_id().update(WardenSeat {
+                    warden_identity: ctx.sender(),
+                    last_action: ctx.timestamp,
+                    ..seat
+                });
+            }
         }
     }
 }
 
 #[spacetimedb::reducer]
 pub fn warden_heartbeat(ctx: &ReducerContext, match_id: u64) {
-    if let Some(m) = ctx.db.game_match().id().find(match_id) {
-        if is_warden_of(ctx, &m) {
-            ctx.db.game_match().id().update(GameMatch { warden_last_action: ctx.timestamp, ..m });
+    if let Some(seat) = ctx.db.warden_seat().match_id().find(match_id) {
+        if seat.warden_identity == ctx.sender() {
+            ctx.db.warden_seat().match_id().update(WardenSeat { last_action: ctx.timestamp, ..seat });
         }
+    }
+}
+
+/// Keep the seat fresh after a successful Warden action (replaces the old
+/// game_match.warden_last_action heartbeat write).
+fn touch_seat(ctx: &ReducerContext, match_id: u64) {
+    if let Some(seat) = ctx.db.warden_seat().match_id().find(match_id) {
+        ctx.db.warden_seat().match_id().update(WardenSeat { last_action: ctx.timestamp, ..seat });
     }
 }
 
@@ -546,14 +717,75 @@ pub fn warden_mimic(ctx: &ReducerContext, match_id: u64, victim: Identity, text:
         id: 0, match_id, sender: victim, sender_name: v.name, sender_color: v.color,
         text: text.chars().take(240).collect(), created_at: ctx.timestamp,
     });
+    touch_seat(ctx, match_id);
 }
 
+/// Legacy / MANIFEST FX entrypoint. The phase is still public on game_match
+/// (FX scaling needs it). DISTORT is migrating off this path to the location-only
+/// `world_event` table (see `warden_event`); MANIFEST also emits a location-only
+/// world_event so the client never reads a victim name out of `target`.
+/// `warden_action` is kept (now NON-public) for any legacy consumers but is no
+/// longer streamed to game clients. game_match.warden_last_action is NO LONGER
+/// written — the seat clock lives in `warden_seat`.
 #[spacetimedb::reducer]
 pub fn warden_act(ctx: &ReducerContext, match_id: u64, action_type: String, target: String, phase: u8) {
     let m = match ctx.db.game_match().id().find(match_id) { Some(m) => m, None => return };
     if !is_warden_of(ctx, &m) { return; }
-    ctx.db.warden_action().insert(WardenAction { id: 0, match_id, action_type, target, created_at: ctx.timestamp });
-    ctx.db.game_match().id().update(GameMatch { phase, warden_last_action: ctx.timestamp, ..m });
+    ctx.db.warden_action().insert(WardenAction {
+        id: 0, match_id, action_type: action_type.clone(), target, created_at: ctx.timestamp,
+    });
+    // phase still public/needed for FX scaling; warden_last_action no longer touched.
+    ctx.db.game_match().id().update(GameMatch { phase, ..m });
+    touch_seat(ctx, match_id);
+}
+
+/// Location-only deception FX. Warden-only. Inserts ONE `world_event` row at
+/// (x,z) with a `kind` tag and NOTHING that identifies a victim. The three
+/// pure-FX actions (GHOST_STEP -> "ghost_step", REVEAL_FALSE -> "phantom_anchor",
+/// DISTORT_ROOM -> "distort") all flow through here; the client distance-gates
+/// rendering so only nearby players ever perceive the event.
+#[spacetimedb::reducer]
+pub fn warden_event(ctx: &ReducerContext, match_id: u64, kind: String, x: f32, z: f32) {
+    let m = match ctx.db.game_match().id().find(match_id) { Some(m) => m, None => return };
+    if !is_warden_of(ctx, &m) { return; }
+    // Guard: MIMIC must never ride the public world_event spine.
+    if kind == "MIMIC" { return; }
+    ctx.db.world_event().insert(WorldEvent {
+        id: 0, match_id, kind, x, z, created_at: ctx.timestamp,
+    });
+    touch_seat(ctx, match_id);
+}
+
+/// SPAWN_LURE: drop a brand-new FAKE anchor (unplaced) near a target. The
+/// existing place_anchor fake->LOST path pays it off untouched, and the minimap
+/// deliberately does NOT distinguish real/fake unplaced anchors, so this reads as
+/// a real objective. Warden-only.
+#[spacetimedb::reducer]
+pub fn warden_spawn_lure(ctx: &ReducerContext, match_id: u64, x: f32, z: f32) {
+    let m = match ctx.db.game_match().id().find(match_id) { Some(m) => m, None => return };
+    if !is_warden_of(ctx, &m) { return; }
+    ctx.db.anchor().insert(Anchor {
+        id: 0, match_id, kind: "fake".to_string(), x, z, carried_by: None, placed: false,
+    });
+    touch_seat(ctx, match_id);
+}
+
+/// CORRUPT_ITEM: silently RELOCATE an unplaced, uncarried REAL anchor to (x,z) —
+/// but ONLY if NO active player in the match can currently see EITHER its old or
+/// its new position. A visible teleport would be a tell, so an observed move is a
+/// no-op. The team's mental map silently goes wrong. Warden-only.
+#[spacetimedb::reducer]
+pub fn warden_corrupt_anchor(ctx: &ReducerContext, match_id: u64, anchor_id: u64, x: f32, z: f32) {
+    let m = match ctx.db.game_match().id().find(match_id) { Some(m) => m, None => return };
+    if !is_warden_of(ctx, &m) { return; }
+    let a = match ctx.db.anchor().id().find(anchor_id) { Some(a) => a, None => return };
+    // Must be an unplaced, uncarried REAL anchor in THIS match.
+    if a.match_id != match_id || a.placed || a.carried_by.is_some() || a.kind != "real" { return; }
+    // The move must be unobserved at BOTH endpoints or it's a visible teleport.
+    if point_observed(ctx, match_id, a.x, a.z) { return; }
+    if point_observed(ctx, match_id, x, z) { return; }
+    ctx.db.anchor().id().update(Anchor { x, z, ..a });
+    touch_seat(ctx, match_id);
 }
 
 #[spacetimedb::reducer]
@@ -565,4 +797,5 @@ pub fn absorb(ctx: &ReducerContext, match_id: u64, victim: Identity) {
     let (vx, vz) = (v.x, v.z);
     ctx.db.player().identity().update(Player { state: "absorbed".to_string(), ..v });
     ctx.db.tether().insert(Tether { id: 0, match_id, absorbed: victim, x: vx, z: vz });
+    touch_seat(ctx, match_id);
 }

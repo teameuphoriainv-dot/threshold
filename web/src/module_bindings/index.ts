@@ -50,8 +50,11 @@ import SetAvatarReducer from "./set_avatar_reducer";
 import SetNameReducer from "./set_name_reducer";
 import StartMatchReducer from "./start_match_reducer";
 import WardenActReducer from "./warden_act_reducer";
+import WardenCorruptAnchorReducer from "./warden_corrupt_anchor_reducer";
+import WardenEventReducer from "./warden_event_reducer";
 import WardenHeartbeatReducer from "./warden_heartbeat_reducer";
 import WardenMimicReducer from "./warden_mimic_reducer";
+import WardenSpawnLureReducer from "./warden_spawn_lure_reducer";
 
 // Import all procedure arg schemas
 
@@ -63,7 +66,7 @@ import ChatMessageRow from "./chat_message_table";
 import GameMatchRow from "./game_match_table";
 import PlayerRow from "./player_table";
 import TetherRow from "./tether_table";
-import WardenActionRow from "./warden_action_table";
+import WorldEventRow from "./world_event_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -161,20 +164,20 @@ const tablesSchema = __schema({
       { name: 'tether_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, TetherRow),
-  warden_action: __table({
-    name: 'warden_action',
+  world_event: __table({
+    name: 'world_event',
     indexes: [
-      { accessor: 'id', name: 'warden_action_id_idx_btree', algorithm: 'btree', columns: [
+      { accessor: 'id', name: 'world_event_id_idx_btree', algorithm: 'btree', columns: [
         'id',
       ] },
-      { accessor: 'match_id', name: 'warden_action_match_id_idx_btree', algorithm: 'btree', columns: [
+      { accessor: 'match_id', name: 'world_event_match_id_idx_btree', algorithm: 'btree', columns: [
         'matchId',
       ] },
     ],
     constraints: [
-      { name: 'warden_action_id_key', constraint: 'unique', columns: ['id'] },
+      { name: 'world_event_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, WardenActionRow),
+  }, WorldEventRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
@@ -195,8 +198,11 @@ const reducersSchema = __reducers(
   __reducerSchema("set_name", SetNameReducer),
   __reducerSchema("start_match", StartMatchReducer),
   __reducerSchema("warden_act", WardenActReducer),
+  __reducerSchema("warden_corrupt_anchor", WardenCorruptAnchorReducer),
+  __reducerSchema("warden_event", WardenEventReducer),
   __reducerSchema("warden_heartbeat", WardenHeartbeatReducer),
   __reducerSchema("warden_mimic", WardenMimicReducer),
+  __reducerSchema("warden_spawn_lure", WardenSpawnLureReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
